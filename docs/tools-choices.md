@@ -94,7 +94,7 @@ Methodology: 5 state-of-the-art open-source tools ranked per domain (best → wo
 | OpenSearch | Apache 2.0 |
 | SigNoz | MIT |
 
-### Tools requiring attention 
+### Tools requiring attention
 
 **Vector — MPL 2.0**
 Free to use, including commercially. The only obligation: if Vector's own source code is modified, those modifications must be published. Orchestrating and configuring Vector (without modifying it) does not trigger this clause.
