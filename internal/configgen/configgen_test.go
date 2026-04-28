@@ -253,9 +253,9 @@ func TestGenerateVector_MkdirFails(t *testing.T) {
 // badFS is a valid fs.FS that contains templates with invalid syntax.
 func badParseFS() fstest.MapFS {
 	return fstest.MapFS{
-		"templates/loki.yaml.tmpl":              {Data: []byte("{{")},
+		"templates/loki.yaml.tmpl":               {Data: []byte("{{")},
 		"templates/grafana-datasource.yaml.tmpl": {Data: []byte("{{")},
-		"templates/vector.toml.tmpl":            {Data: []byte("{{")},
+		"templates/vector.toml.tmpl":             {Data: []byte("{{")},
 	}
 }
 
@@ -263,9 +263,9 @@ func badParseFS() fstest.MapFS {
 // to trigger a template.Execute error.
 func badExecFS() fstest.MapFS {
 	return fstest.MapFS{
-		"templates/loki.yaml.tmpl":              {Data: []byte("{{.MissingField}}")},
+		"templates/loki.yaml.tmpl":               {Data: []byte("{{.MissingField}}")},
 		"templates/grafana-datasource.yaml.tmpl": {Data: []byte("{{.MissingField}}")},
-		"templates/vector.toml.tmpl":            {Data: []byte("{{.MissingField}}")},
+		"templates/vector.toml.tmpl":             {Data: []byte("{{.MissingField}}")},
 	}
 }
 

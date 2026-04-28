@@ -25,4 +25,3 @@ func DownCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, pur
 func SetPollFn(fn func(context.Context, *config.Config, func(string)) error) {
 	pollFn = fn
 }
-

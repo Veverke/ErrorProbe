@@ -30,16 +30,16 @@ import (
 type fakeSDK struct {
 	pingErr error
 
-	existingImages  map[string]bool
-	pullReader      io.ReadCloser
-	pullErr         error
+	existingImages map[string]bool
+	pullReader     io.ReadCloser
+	pullErr        error
 
-	containers   map[string]*fakeContainer
-	killErr      error
-	createErr    error
-	startErr     error
-	stopErr      error
-	removeErr    error
+	containers map[string]*fakeContainer
+	killErr    error
+	createErr  error
+	startErr   error
+	stopErr    error
+	removeErr  error
 
 	networks     map[string]bool
 	createNetErr error

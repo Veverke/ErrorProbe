@@ -52,4 +52,3 @@ func downCore(ctx context.Context, _ *config.Config, cli docker.DockerAPI, purge
 
 	return nil
 }
-

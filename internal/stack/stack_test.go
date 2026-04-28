@@ -46,8 +46,8 @@ func newMockDocker() *mockDockerAPI {
 	return &mockDockerAPI{running: map[string]bool{}}
 }
 
-func (m *mockDockerAPI) Close() error                           { return nil }
-func (m *mockDockerAPI) Ping(_ context.Context) error          { return m.pingErr }
+func (m *mockDockerAPI) Close() error                 { return nil }
+func (m *mockDockerAPI) Ping(_ context.Context) error { return m.pingErr }
 func (m *mockDockerAPI) ImageExists(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
@@ -95,7 +95,7 @@ func (m *mockDockerAPI) RemoveContainer(_ context.Context, _ string, _ bool) err
 	return m.removeErr
 }
 func (m *mockDockerAPI) VolumeExists(_ context.Context, _ string) (bool, error) { return false, nil }
-func (m *mockDockerAPI) CreateVolume(_ context.Context, _ string) error          { return m.volErr }
+func (m *mockDockerAPI) CreateVolume(_ context.Context, _ string) error         { return m.volErr }
 func (m *mockDockerAPI) RemoveVolume(_ context.Context, _ string) error {
 	if m.removeVolErr != nil {
 		return m.removeVolErr
@@ -592,4 +592,3 @@ func makeConfigDir(t *testing.T) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "grafana", "provisioning", "datasources"), 0o755))
 	return dir
 }
-

@@ -175,4 +175,3 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 func managedLabel() map[string]string {
 	return map[string]string{"managed-by": "errorprobe"}
 }
-

@@ -10,12 +10,12 @@ import (
 
 // Config holds the full errorprobe.yaml configuration.
 type Config struct {
-	Version int   `mapstructure:"version"`
-	Stack   Stack `mapstructure:"stack"`
-	Detection Detection `mapstructure:"detection"`
-	Containers Containers `mapstructure:"containers"`
-	Check Check `mapstructure:"check"`
-	HistoryRetention string `mapstructure:"history_retention"`
+	Version          int        `mapstructure:"version"`
+	Stack            Stack      `mapstructure:"stack"`
+	Detection        Detection  `mapstructure:"detection"`
+	Containers       Containers `mapstructure:"containers"`
+	Check            Check      `mapstructure:"check"`
+	HistoryRetention string     `mapstructure:"history_retention"`
 }
 
 // Stack groups all container image and port settings.
