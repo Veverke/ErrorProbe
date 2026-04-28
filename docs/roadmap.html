@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ErrorProbe — Development Roadmap</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f172a;
+  --surface:   #1e293b;
+  --surface2:  #172033;
+  --border:    #334155;
+  --border2:   #1e2d3d;
+  --text:      #e2e8f0;
+  --muted:     #94a3b8;
+  --dim:       #475569;
+
+  --c-found:   #64748b;
+  --c-v1core:  #3b82f6;
+  --c-v1folw:  #10b981;
+  --c-v2:      #8b5cf6;
+
+  --c-today:   #f59e0b;
+  --c-milest:  #f97316;
+  --c-done:    #22c55e;
+
+  --radius: 8px;
+  --info-w: 310px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 28px 32px 48px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ───────────────────────────── Header ───────────────────────────── */
+.page-header { margin-bottom: 22px; }
+
+.page-title h1 {
+  font-size: 26px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.5px;
+}
+
+.page-title .subtitle {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.stats-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 16px;
+  text-align: center;
+  min-width: 90px;
+}
+
+.stat-val { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1.1; }
+.stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 2px; }
+
+/* ───────────────────────────── Legend ───────────────────────────── */
+.legend {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.legend-group { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.legend-sep { width: 1px; height: 20px; background: var(--border); }
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.l-swatch { width: 14px; height: 9px; border-radius: 3px; }
+.l-dot { width: 8px; height: 8px; border-radius: 50%; }
+.l-planned { background: var(--dim); }
+.l-inprog  { background: var(--c-today); box-shadow: 0 0 5px var(--c-today); }
+.l-done    { background: var(--c-done); }
+
+/* ───────────────────────────── Gantt wrapper ─────────────────────── */
+.gantt-outer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-x: auto;
+  overflow-y: visible;
+  position: relative;
+}
+
+.gantt-inner {
+  min-width: 860px;
+  position: relative;
+}
+
+/* Row base */
+.g-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border2);
+  position: relative;
+}
+
+.g-row:last-child { border-bottom: none; }
+
+.g-row.is-header {
+  min-height: unset;
+  background: #111827;
+  border-bottom: 1px solid var(--border);
+}
+
+.g-row.is-milestone-row {
+  min-height: 32px;
+  background: #0d1526;
+  border-bottom: none;
+}
+
+/* Info column */
+.info-col {
+  width: var(--info-w);
+  min-width: var(--info-w);
+  max-width: var(--info-w);
+  padding: 8px 14px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.info-col.hdr {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--dim);
+}
+
+.p-name-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.p-id {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--dim);
+  min-width: 52px;
+}
+
+.p-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.p-badges {
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  line-height: 1.3;
+}
+
+.b-pts   { background: #1e3254; color: #7dd3fc; }
+.b-tasks { background: #14302a; color: #6ee7b7; }
+.b-xs    { background: #374151; color: #9ca3af; }
+.b-m     { background: #1c3357; color: #60a5fa; }
+.b-l     { background: #1a3832; color: #34d399; }
+.b-xl    { background: #2e1b5b; color: #c4b5fd; }
+
+.status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-top: 1px; }
+.s-planned  { background: var(--dim); }
+.s-in-progress { background: var(--c-today); box-shadow: 0 0 5px var(--c-today); }
+.s-completed   { background: var(--c-done); }
+
+/* Timeline column */
+.tl-col {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Month / week headers */
+.month-hdr { position: relative; height: 26px; border-bottom: 1px solid var(--border2); }
+.week-hdr  { position: relative; height: 18px; }
+
+.month-lbl {
+  position: absolute;
+  top: 0; height: 26px;
+  display: flex;
+  align-items: center;
+  padding-left: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.week-lbl {
+  position: absolute;
+  top: 0; height: 18px;
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
+  font-size: 9px;
+  color: var(--dim);
+  border-right: 1px solid var(--border2);
+  overflow: hidden;
+}
+
+/* Phase timeline area */
+.tl-content {
+  position: relative;
+  height: 60px;
+}
+
+/* Grid lines */
+.gl { position: absolute; top: 0; bottom: 0; width: 1px; pointer-events: none; }
+.gl-week  { background: var(--border2); }
+.gl-month { background: #2a3d53; }
+
+/* Gantt bar */
+.bar-wrap {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 28px;
+  cursor: pointer;
+}
+
+.bar {
+  width: 100%;
+  height: 100%;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: filter 0.15s;
+  user-select: none;
+  letter-spacing: 0.2px;
+}
+
+.bar:hover { filter: brightness(1.2); }
+
+.bar.completed {
+  opacity: 0.7;
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    rgba(255,255,255,0.06) 4px,
+    rgba(255,255,255,0.06) 8px
+  );
+}
+
+.bar.in-progress {
+  box-shadow: 0 0 8px 1px currentColor;
+}
+
+.bar-date-label {
+  position: absolute;
+  top: calc(50% + 15px);
+  font-size: 9px;
+  color: var(--dim);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Version span label */
+.version-span {
+  position: absolute;
+  top: 4px;
+  height: 14px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Today line */
+.today-overlay {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 2px;
+  background: var(--c-today);
+  z-index: 30;
+  pointer-events: none;
+}
+
+.today-tag {
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--c-today);
+  color: #000;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* Milestone row */
+.ms-content { position: relative; height: 32px; }
+
+.ms-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 10;
+  cursor: default;
+}
+
+.ms-diamond {
+  width: 10px; height: 10px;
+  background: var(--c-milest);
+  transform: rotate(45deg);
+  flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,0.15);
+}
+
+.ms-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--c-milest);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.ms-date { font-size: 8px; color: var(--dim); margin-left: 1px; }
+
+/* ───────────────────────────── Tooltip ──────────────────────────── */
+#tooltip {
+  position: fixed;
+  display: none;
+  background: #08111f;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-size: 12px;
+  z-index: 9999;
+  max-width: 320px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  pointer-events: none;
+}
+
+.tt-hdr {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border2);
+}
+
+.tt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.tt-k { color: var(--muted); }
+.tt-v { color: var(--text); font-weight: 600; }
+
+.tt-goal {
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2);
+}
+
+/* ───────────────────────────── Key dates ────────────────────────── */
+.key-dates {
+  margin-top: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.kd-title {
+  padding: 9px 16px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--dim);
+  background: #111827;
+  border-bottom: 1px solid var(--border);
+}
+
+.kd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1px;
+  background: var(--border2);
+}
+
+.kd-cell {
+  background: var(--surface);
+  padding: 9px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.kd-dia {
+  width: 9px; height: 9px;
+  min-width: 9px;
+  background: var(--c-milest);
+  transform: rotate(45deg);
+  margin-top: 3px;
+}
+
+.kd-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.kd-desc { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+/* ───────────────────────────── Update hint ──────────────────────── */
+.update-hint {
+  margin-top: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.update-hint strong { color: var(--text); }
+.update-hint code {
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  background: var(--border2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #7dd3fc;
+  font-size: 11px;
+}
+
+/* Scrollbar styling */
+.gantt-outer::-webkit-scrollbar { height: 6px; }
+.gantt-outer::-webkit-scrollbar-track { background: var(--surface); }
+.gantt-outer::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <div class="page-title">
+    <h1>ErrorProbe — Development Roadmap</h1>
+    <div class="subtitle">Visual Gantt chart &nbsp;·&nbsp; Updated <span id="gen-date"></span></div>
+    <div class="stats-row" id="stats-row"></div>
+  </div>
+</div>
+
+<div class="legend" id="legend"></div>
+
+<div class="gantt-outer">
+  <div class="gantt-inner" id="gantt"></div>
+</div>
+
+<div class="key-dates" id="key-dates"></div>
+
+<div class="update-hint">
+  <strong>How to update this roadmap after completing a phase:</strong><br>
+  In the <code>PHASES</code> array (script below), set <code>status: "completed"</code>,
+  set <code>actualEnd: "YYYY-MM-DD"</code> to the real finish date, and adjust the
+  <code>start</code> / <code>end</code> of all subsequent phases to reflect revised estimates.
+  Also update the <code>TODAY</code> constant to the current date and refresh the browser.
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+/* ====================================================================
+ *  ROADMAP DATA
+ *  ─────────────────────────────────────────────────────────────────
+ *  To mark a phase COMPLETED:
+ *    1. Set   status: "completed"
+ *    2. Set   actualEnd: "YYYY-MM-DD"   (real finish date)
+ *    3. Shift subsequent phases' start/end if velocity differed
+ *
+ *  To mark a phase IN PROGRESS:
+ *    1. Set   status: "in-progress"
+ *    2. Set   progress: 0-100   (% of tasks done, optional)
+ *
+ *  Update TODAY below to the current date when refreshing estimates.
+ * ==================================================================== */
+
+const TODAY = new Date('2026-04-28');   // ← keep this current
+
+const PHASES = [
+  {
+    id: 0,
+    name: "Phase 0",
+    title: "Repository & Project Skeleton",
+    goal: "Compilable Go project with Cobra CLI skeleton, config loader (errorprobe.yaml), " +
+          "rotating logger, state directory initialisation, and nine subcommand stubs.",
+    start:    "2026-04-28",
+    end:      "2026-05-05",   // exclusive (first day of NEXT phase)
+    complexity: "XS",
+    points: 5,
+    tasks: 15,                // T0.1 – T0.15
+    category: "foundation",
+    status: "planned",        // "planned" | "in-progress" | "completed"
+    actualEnd: null,          // set to "YYYY-MM-DD" when done
+    progress: 0,              // 0-100, meaningful when status = "in-progress"
+  },
+  {
+    id: 1,
+    name: "Phase 1",
+    title: "Stack Bootstrap Engine",
+    goal: "errorprobe up/down: pull images, start Vector + Loki + Grafana via Docker API, " +
+          "health-poll, port conflict detection, config generators, idempotent restart.",
+    start:    "2026-05-05",
+    end:      "2026-05-19",
+    complexity: "M",
+    points: 13,
+    tasks: 17,                // T1.1 – T1.17
+    category: "v1-core",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+  {
+    id: 2,
+    name: "Phase 2",
+    title: "Container Discovery",
+    goal: "Discovery loop, watch-policy filter, full Vector config + VRL transform, " +
+          "reconciler (SIGHUP on change), errorprobe list.",
+    start:    "2026-05-19",
+    end:      "2026-06-02",
+    complexity: "M",
+    points: 13,
+    tasks: 15,                // T2.1 – T2.15
+    category: "v1-core",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+  {
+    id: 3,
+    name: "Phase 3",
+    title: "Semantic Health Engine",
+    goal: "HTTP ingest server, health state machine (OK → HAS_ERRORS), snapshot persistence, " +
+          "errorprobe status, Bubbletea live-watch TUI.",
+    start:    "2026-06-02",
+    end:      "2026-06-18",
+    complexity: "L",
+    points: 21,
+    tasks: 17,                // T3.1 – T3.17
+    category: "v1-core",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+  {
+    id: 4,
+    name: "Phase 4",
+    title: "Developer UX & CI Integration",
+    goal: "errorprobe check (CI exit codes), logs stream from Loki, reload (soft/hard change " +
+          "classifier), Grafana deep-links, polished startup output.",
+    start:    "2026-06-18",
+    end:      "2026-07-02",
+    complexity: "M",
+    points: 13,
+    tasks: 15,                // T4.1 – T4.15
+    category: "v1-core",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+  {
+    id: 5,
+    name: "Phase 5",
+    title: "K8s Discovery",
+    goal: "Extend discovery to local K8s clusters (Docker Desktop, k3s, minikube). " +
+          "Runtime auto-detect, pod/namespace labels, K8s exclusion patterns, K8s Vector source.",
+    start:    "2026-07-02",
+    end:      "2026-07-19",
+    complexity: "L",
+    points: 21,
+    tasks: 16,                // T5.1 – T5.16
+    category: "v1-follow",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+  {
+    id: 6,
+    name: "Phase 6",
+    title: "Tier 2 Detection",
+    goal: "FAILING state, error fingerprinting, Loki query engine, Tier 2 evaluator " +
+          "(repeated-error threshold), history log with retention, check.fail_on: FAILING.",
+    start:    "2026-07-19",
+    end:      "2026-08-09",
+    complexity: "XL",
+    points: 34,
+    tasks: 16,                // T6.1 – T6.16
+    category: "v2",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+  {
+    id: 7,
+    name: "Phase 7",
+    title: "gRPC / OTLP Transport",
+    goal: "gRPC OTLP ingest as configurable alternative to HTTP JSON. " +
+          "Transport factory, Vector gRPC sink, reload classifies transport change as hard.",
+    start:    "2026-08-09",
+    end:      "2026-08-26",
+    complexity: "L",
+    points: 21,
+    tasks: 13,                // T7.1 – T7.13
+    category: "v2",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+  {
+    id: 8,
+    name: "Phase 8",
+    title: "Remote Docker & Kubernetes",
+    goal: "Remote host discovery (Docker TCP/SSH, kubeconfig context), bearer token auth, " +
+          "remote Vector bundle export, remote host grouping in TUI and list.",
+    start:    "2026-08-26",
+    end:      "2026-09-16",
+    complexity: "XL",
+    points: 34,
+    tasks: 14,                // T8.1 – T8.14
+    category: "v2",
+    status: "planned",
+    actualEnd: null,
+    progress: 0,
+  },
+];
+
+const MILESTONES = [
+  {
+    date: "2026-07-01",
+    label: "V1 Core Complete",
+    description: "Phases 0–4 complete: full local Docker workflow, error detection, CI integration",
+  },
+  {
+    date: "2026-07-18",
+    label: "V1 Complete",
+    description: "Phase 5 complete: K8s discovery added — original pain-case fully solved",
+  },
+  {
+    date: "2026-09-15",
+    label: "V2 Complete",
+    description: "Phases 6–8 complete: Tier 2 detection, gRPC transport, remote host support",
+  },
+];
+
+/* ====================================================================
+ *  CHART CONFIG  (no data below this line needs editing)
+ * ==================================================================== */
+
+const CHART_START = new Date('2026-04-28');
+const CHART_END   = new Date('2026-09-23');  // 1 week padding after last phase
+const TOTAL_MS    = CHART_END - CHART_START;
+
+function pct(dateStr) {
+  return (new Date(dateStr) - CHART_START) / TOTAL_MS * 100;
+}
+
+function widthPct(startStr, endStr) {
+  return (new Date(endStr) - new Date(startStr)) / TOTAL_MS * 100;
+}
+
+const CAT = {
+  foundation: { color: '#64748b', label: 'Foundation' },
+  'v1-core':  { color: '#3b82f6', label: 'V1 Core' },
+  'v1-follow':{ color: '#10b981', label: 'V1 Follow-on' },
+  v2:         { color: '#8b5cf6', label: 'V2' },
+};
+
+const CMPLX_CLASS = { XS: 'b-xs', M: 'b-m', L: 'b-l', XL: 'b-xl' };
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function fmtShort(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function getMonths() {
+  const months = [];
+  let cur = new Date(CHART_START.getFullYear(), CHART_START.getMonth(), 1);
+  while (cur < CHART_END) {
+    const next  = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+    const s     = cur  < CHART_START ? CHART_START : cur;
+    const e     = next > CHART_END   ? CHART_END   : next;
+    months.push({
+      label: cur.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+      left:  pct(s),
+      width: widthPct(s, e),
+    });
+    cur = next;
+  }
+  return months;
+}
+
+function getWeeks() {
+  const weeks = [];
+  const d = new Date(CHART_START);
+  while (d < CHART_END) {
+    weeks.push(new Date(d));
+    d.setDate(d.getDate() + 7);
+  }
+  return weeks;
+}
+
+/* ====================================================================
+ *  RENDER
+ * ==================================================================== */
+
+function render() {
+  document.getElementById('gen-date').textContent =
+    TODAY.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  renderStats();
+  renderLegend();
+  renderGantt();
+  renderKeyDates();
+}
+
+/* ── Stats bar ── */
+function renderStats() {
+  const totalPts   = PHASES.reduce((s, p) => s + p.points, 0);
+  const totalTasks = PHASES.reduce((s, p) => s + p.tasks, 0);
+  const donePts    = PHASES.filter(p => p.status === 'completed').reduce((s, p) => s + p.points, 0);
+  const donePhs    = PHASES.filter(p => p.status === 'completed').length;
+  const lastEnd    = new Date(PHASES[PHASES.length - 1].end);
+  const firstStart = new Date(PHASES[0].start);
+  const calDays    = Math.round((lastEnd - firstStart) / 86400000);
+  const weeks      = Math.round(calDays / 7);
+
+  document.getElementById('stats-row').innerHTML = [
+    { val: PHASES.length,                   lbl: 'Phases' },
+    { val: totalPts,                         lbl: 'Story Points' },
+    { val: totalTasks,                       lbl: 'Total Tasks' },
+    { val: calDays,                          lbl: 'Calendar Days' },
+    { val: `~${weeks}`,                      lbl: 'Weeks' },
+    { val: `${donePhs} / ${PHASES.length}`,  lbl: 'Phases Done' },
+    { val: `${donePts} / ${totalPts}`,       lbl: 'Pts Complete' },
+  ].map(s => `<div class="stat"><div class="stat-val">${s.val}</div><div class="stat-lbl">${s.lbl}</div></div>`).join('');
+}
+
+/* ── Legend ── */
+function renderLegend() {
+  const catItems = Object.entries(CAT).map(([k, v]) =>
+    `<div class="legend-item"><div class="l-swatch" style="background:${v.color}"></div>${v.label}</div>`
+  ).join('');
+
+  const statusItems = [
+    { cls: 'l-dot l-planned', label: 'Planned' },
+    { cls: 'l-dot l-inprog',  label: 'In Progress' },
+    { cls: 'l-dot l-done',    label: 'Completed' },
+  ].map(s => `<div class="legend-item"><div class="${s.cls}"></div>${s.label}</div>`).join('');
+
+  const cmplxItems = ['XS','M','L','XL'].map(c =>
+    `<span class="badge ${CMPLX_CLASS[c]}">${c}</span>`
+  ).join('');
+
+  document.getElementById('legend').innerHTML = `
+    <div class="legend-group">${catItems}</div>
+    <div class="legend-sep"></div>
+    <div class="legend-group">${statusItems}</div>
+    <div class="legend-sep"></div>
+    <div class="legend-group" style="gap:6px;align-items:center">
+      <span style="font-size:11px;color:var(--muted)">Complexity:</span>
+      ${cmplxItems}
+    </div>
+  `;
+}
+
+/* ── Main Gantt ── */
+function renderGantt() {
+  const months = getMonths();
+  const weeks  = getWeeks();
+  let html = '';
+
+  /* ─ Header ─ */
+  html += `
+  <div class="g-row is-header">
+    <div class="info-col hdr">Phase</div>
+    <div class="tl-col">
+      <div class="month-hdr">
+        ${months.map(m =>
+          `<div class="month-lbl" style="left:${m.left.toFixed(3)}%;width:${m.width.toFixed(3)}%">${m.label}</div>`
+        ).join('')}
+      </div>
+      <div class="week-hdr">
+        ${weeks.map((w, i) => {
+          const l = pct(w);
+          const r = pct(new Date(w.getTime() + 7 * 86400000));
+          if (l >= 100) return '';
+          return `<div class="week-lbl" style="left:${l.toFixed(3)}%;width:${(Math.min(r,100)-l).toFixed(3)}%">W${i+1}</div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>`;
+
+  /* ─ Version spans (cosmetic row) ─ */
+  const vSpans = [
+    { label: 'V1 Core', start: '2026-04-28', end: '2026-07-02', color: '#3b82f6' },
+    { label: 'V1 Follow-on', start: '2026-07-02', end: '2026-07-19', color: '#10b981' },
+    { label: 'V2', start: '2026-07-19', end: '2026-09-16', color: '#8b5cf6' },
+  ];
+
+  html += `
+  <div class="g-row is-header" style="min-height:20px;border-bottom:1px solid var(--border2)">
+    <div class="info-col hdr" style="font-size:9px">Version Span</div>
+    <div class="tl-col" style="position:relative;height:20px">
+      ${months.filter((_,i) => i > 0).map(m =>
+        `<div class="gl gl-month" style="left:${m.left.toFixed(3)}%"></div>`
+      ).join('')}
+      ${vSpans.map(vs => {
+        const l = pct(vs.start);
+        const w = widthPct(vs.start, vs.end);
+        if (w <= 0) return '';
+        return `<div style="
+          position:absolute; top:3px; height:14px;
+          left:${l.toFixed(3)}%; width:${w.toFixed(3)}%;
+          background:${vs.color}22;
+          border-top:1px solid ${vs.color}66;
+          border-bottom:1px solid ${vs.color}66;
+          display:flex; align-items:center; padding:0 6px;
+          font-size:8px; font-weight:700; color:${vs.color}cc;
+          text-transform:uppercase; letter-spacing:0.5px;
+          overflow:hidden; white-space:nowrap;
+          pointer-events:none;
+        ">${vs.label}</div>`;
+      }).join('')}
+    </div>
+  </div>`;
+
+  /* ─ Phase rows ─ */
+  PHASES.forEach(p => {
+    const color  = CAT[p.category].color;
+    const left   = pct(p.start);
+    const width  = widthPct(p.start, p.end);
+    const lastDay = new Date(p.end); lastDay.setDate(lastDay.getDate() - 1);
+    const durDays = Math.round((new Date(p.end) - new Date(p.start)) / 86400000);
+
+    let barClass = '';
+    if (p.status === 'completed')   barClass = 'completed';
+    if (p.status === 'in-progress') barClass = 'in-progress';
+
+    const statusIcon = p.status === 'completed' ? ' ✓' : p.status === 'in-progress' ? ' ●' : '';
+
+    /* progress stripe for in-progress bars */
+    const progressFill = p.status === 'in-progress' && p.progress > 0
+      ? `<div style="
+           position:absolute; top:0; left:0; height:100%;
+           width:${p.progress}%; border-radius:5px;
+           background:rgba(255,255,255,0.15);
+           pointer-events:none;
+         "></div>`
+      : '';
+
+    html += `
+    <div class="g-row" data-id="${p.id}">
+      <div class="info-col">
+        <div class="p-name-row">
+          <div class="status-dot s-${p.status}"></div>
+          <span class="p-id">${p.name}</span>
+          <span class="p-title" title="${p.title}">${p.title}</span>
+        </div>
+        <div class="p-badges">
+          <span class="badge b-pts">${p.points} pts</span>
+          <span class="badge b-tasks">${p.tasks} tasks</span>
+          <span class="badge ${CMPLX_CLASS[p.complexity]}">${p.complexity}</span>
+          <span style="font-size:9px;color:var(--dim)">${durDays}d</span>
+        </div>
+      </div>
+      <div class="tl-col">
+        <div class="tl-content">
+          ${weeks.map(w => {
+            const wl = pct(w); if (wl <= 0 || wl >= 100) return '';
+            return `<div class="gl gl-week" style="left:${wl.toFixed(3)}%"></div>`;
+          }).join('')}
+          ${months.filter((_,i) => i > 0).map(m =>
+            `<div class="gl gl-month" style="left:${m.left.toFixed(3)}%"></div>`
+          ).join('')}
+          <div class="bar-wrap"
+               style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%"
+               onmouseenter="showTip(event,${p.id})"
+               onmouseleave="hideTip()"
+               onmousemove="moveTip(event)">
+            <div class="bar ${barClass}" style="background:${color};position:relative">
+              ${progressFill}
+              <span style="position:relative;z-index:1">${p.name}${statusIcon}</span>
+            </div>
+          </div>
+          <div class="bar-date-label" style="left:${left.toFixed(3)}%">
+            ${fmtShort(p.start)} – ${fmtShort(lastDay)} &nbsp;(${durDays}d)
+          </div>
+        </div>
+      </div>
+    </div>`;
+  });
+
+  /* ─ Milestone row ─ */
+  html += `
+  <div class="g-row is-milestone-row">
+    <div class="info-col" style="font-size:10px;color:var(--dim);font-style:italic;justify-content:center">
+      Milestones
+    </div>
+    <div class="tl-col">
+      <div class="ms-content">
+        ${weeks.map(w => {
+          const wl = pct(w); if (wl <= 0 || wl >= 100) return '';
+          return `<div class="gl gl-week" style="left:${wl.toFixed(3)}%;top:0;bottom:0;position:absolute;width:1px"></div>`;
+        }).join('')}
+        ${months.filter((_,i) => i > 0).map(m =>
+          `<div class="gl gl-month" style="left:${m.left.toFixed(3)}%;top:0;bottom:0;position:absolute;width:1px"></div>`
+        ).join('')}
+        ${MILESTONES.map(m => {
+          const l = pct(m.date);
+          return `
+          <div class="ms-marker" style="left:${l.toFixed(3)}%">
+            <div class="ms-diamond"></div>
+            <span class="ms-label">${m.label}</span>
+            <span class="ms-date">${fmtShort(m.date)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>`;
+
+  document.getElementById('gantt').innerHTML = html;
+
+  /* ── Today overlay (full-height) ── */
+  addTodayOverlay();
+}
+
+function addTodayOverlay() {
+  const todayPct = pct(TODAY);
+  if (todayPct < 0 || todayPct > 100) return;
+
+  const ganttInner = document.getElementById('gantt');
+  const infoCol    = ganttInner.querySelector('.info-col');
+  const tlCol      = ganttInner.querySelector('.tl-col');
+  if (!infoCol || !tlCol) return;
+
+  // Wait for layout
+  requestAnimationFrame(() => {
+    const infoW  = infoCol.getBoundingClientRect().width;
+    const tlW    = tlCol.getBoundingClientRect().width;
+    const xPx    = infoW + (todayPct / 100) * tlW;
+
+    const line = document.createElement('div');
+    line.className = 'today-overlay';
+    line.style.left = xPx.toFixed(1) + 'px';
+    line.innerHTML  = `<div class="today-tag">TODAY</div>`;
+    ganttInner.appendChild(line);
+  });
+}
+
+/* ── Key dates ── */
+function renderKeyDates() {
+  const completedCells = PHASES
+    .filter(p => p.status === 'completed')
+    .map(p => `
+    <div class="kd-cell">
+      <div class="kd-dia" style="background:var(--c-done)"></div>
+      <div>
+        <div class="kd-name">${p.name} Completed</div>
+        <div class="kd-desc">${fmtDate(p.actualEnd || p.end)}</div>
+      </div>
+    </div>`).join('');
+
+  document.getElementById('key-dates').innerHTML = `
+    <div class="kd-title">Key Milestones &amp; Completion Dates</div>
+    <div class="kd-grid">
+      ${MILESTONES.map(m => `
+      <div class="kd-cell">
+        <div class="kd-dia"></div>
+        <div>
+          <div class="kd-name">${m.label} &nbsp;—&nbsp; ${fmtShort(m.date)}</div>
+          <div class="kd-desc">${m.description}</div>
+        </div>
+      </div>`).join('')}
+      ${completedCells}
+    </div>
+  `;
+}
+
+/* ====================================================================
+ *  TOOLTIP
+ * ==================================================================== */
+const tooltip = document.getElementById('tooltip');
+
+function showTip(event, id) {
+  const p = PHASES.find(x => x.id === id);
+  if (!p) return;
+
+  const lastDay = new Date(p.end); lastDay.setDate(lastDay.getDate() - 1);
+  const durDays = Math.round((new Date(p.end) - new Date(p.start)) / 86400000);
+  const statusTxt = { planned: '◦ Planned', 'in-progress': '● In Progress', completed: '✓ Completed' }[p.status];
+  const color = CAT[p.category].color;
+
+  tooltip.innerHTML = `
+    <div class="tt-hdr" style="color:${color}">${p.name} — ${p.title}</div>
+    <div class="tt-row"><span class="tt-k">Category</span><span class="tt-v">${CAT[p.category].label}</span></div>
+    <div class="tt-row"><span class="tt-k">Planned start</span><span class="tt-v">${fmtDate(p.start)}</span></div>
+    <div class="tt-row"><span class="tt-k">Planned end</span><span class="tt-v">${fmtDate(lastDay)}</span></div>
+    ${p.actualEnd ? `<div class="tt-row"><span class="tt-k">Actual end</span><span class="tt-v">${fmtDate(p.actualEnd)}</span></div>` : ''}
+    <div class="tt-row"><span class="tt-k">Duration</span><span class="tt-v">${durDays} calendar days</span></div>
+    <div class="tt-row"><span class="tt-k">Complexity</span><span class="tt-v">${p.complexity} · ${p.points} story pts</span></div>
+    <div class="tt-row"><span class="tt-k">Tasks</span><span class="tt-v">${p.tasks}</span></div>
+    <div class="tt-row"><span class="tt-k">Status</span><span class="tt-v">${statusTxt}</span></div>
+    <div class="tt-goal">${p.goal}</div>
+  `;
+
+  tooltip.style.display = 'block';
+  moveTip(event);
+}
+
+function moveTip(event) {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const tw = tooltip.offsetWidth,  th = tooltip.offsetHeight;
+  let x = event.clientX + 16, y = event.clientY + 16;
+  if (x + tw > vw - 8) x = event.clientX - tw - 16;
+  if (y + th > vh - 8) y = event.clientY - th - 16;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top  = y + 'px';
+}
+
+function hideTip() { tooltip.style.display = 'none'; }
+
+/* ====================================================================
+ *  INIT
+ * ==================================================================== */
+render();
+</script>
+</body>
+</html>
