@@ -1,0 +1,18 @@
+# Binaries
+errorprobe
+errorprobe.exe
+dist/
+
+# Vendor
+vendor/
+
+# Build artifacts
+*.exe
+*.out
+*.test
+coverage
+
+# IDE
+.idea/
+.vscode/
+*.swp
