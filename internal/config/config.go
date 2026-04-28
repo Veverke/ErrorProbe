@@ -22,7 +22,7 @@ type Config struct {
 type Stack struct {
 	Vector  VectorConfig  `mapstructure:"vector"`
 	Loki    LokiConfig    `mapstructure:"loki"`
-	Grafana GrafanaConfig `mapstructure:"grafana"`
+Grafana GrafanaConfig `mapstructure:"grafana"`
 	Ingest  IngestConfig  `mapstructure:"ingest"`
 }
 
@@ -110,6 +110,8 @@ func Load(projectDir string) (*Config, error) {
 		if err := merged.ReadInConfig(); err != nil {
 			return nil, fmt.Errorf("reading global config %s: %w", globalPath, err)
 		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("checking global config %s: %w", globalPath, err)
 	}
 
 	// Load project-local if present (overrides global).
@@ -122,6 +124,8 @@ func Load(projectDir string) (*Config, error) {
 		for _, key := range override.AllKeys() {
 			merged.Set(key, override.Get(key))
 		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("checking project config %s: %w", localPath, err)
 	}
 
 	var cfg Config

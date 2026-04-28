@@ -37,6 +37,7 @@ semantic health signal — no manual infrastructure setup required.`,
 		if err := logger.Init(cfg.LogsDir()+"errorprobe.log", 10, 5); err != nil {
 			return fmt.Errorf("initialising logger: %w", err)
 		}
+		logger.SetDebug(debugMode)
 		logger.Info("errorprobe started", "command", cmd.Name())
 		if debugMode {
 			logger.Debug("debug mode enabled")

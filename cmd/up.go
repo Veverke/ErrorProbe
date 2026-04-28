@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,8 +19,7 @@ health-poll until all services are live. Safe to run against an already-running 
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("loading config: %w", err)
 		}
 
 		onStatus := func(msg string) {
@@ -29,8 +27,7 @@ health-poll until all services are live. Safe to run against an already-running 
 		}
 
 		if err := stack.Up(cmd.Context(), cfg, onStatus); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("starting stack: %w", err)
 		}
 		return nil
 	},

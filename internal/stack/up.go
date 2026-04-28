@@ -30,6 +30,10 @@ func Up(ctx context.Context, cfg *config.Config, onStatus func(string)) error {
 // upCore is the testable implementation of Up. It receives an already-created
 // Docker client so that tests can inject a mock.
 func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onStatus func(string)) error {
+	if onStatus == nil {
+		onStatus = func(string) {}
+	}
+
 	// 1. Verify Docker daemon is reachable.
 	onStatus("checking docker daemon…")
 	if err := cli.Ping(ctx); err != nil {

@@ -42,20 +42,20 @@ func TestLoad_ProjectLocal_Overrides_Global(t *testing.T) {
 	globalDir := t.TempDir()
 	projectDir := t.TempDir()
 
-	// Write global config.
-	if err := os.WriteFile(filepath.Join(globalDir, "config.yaml"), []byte("version: 1\nstack:\n  loki:\n    port: 4000\n"), 0o644); err != nil {
+	// Write global config to <home>/.errorprobe/config.yaml as Load() expects.
+	epDir := filepath.Join(globalDir, ".errorprobe")
+	if err := os.MkdirAll(epDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(epDir, "config.yaml"), []byte("version: 1\nstack:\n  loki:\n    port: 4000\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Write project-local config with a different port.
 	writeYAML(t, projectDir, "version: 1\nstack:\n  loki:\n    port: 5000\n")
 
 	// Patch homeDir to return globalDir for this test.
-	origHome := os.Getenv("HOME")
 	t.Setenv("HOME", globalDir)
 	t.Setenv("USERPROFILE", globalDir)
-	defer func() {
-		os.Setenv("HOME", origHome)
-	}()
 
 	cfg, err := Load(projectDir)
 	require.NoError(t, err)

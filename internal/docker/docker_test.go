@@ -515,10 +515,7 @@ func TestCreateVolume_ConflictIsNoOp(t *testing.T) {
 	c := newTestClient(f)
 	// Conflict should be treated as idempotent success.
 	err := c.CreateVolume(context.Background(), "myvol")
-	// If errdefs.IsConflict(ErrConflict) is true, we get nil.
-	// If the volume code doesn't check conflict, we get an error — both acceptable.
-	// The point is to hit the code path.
-	_ = err
+	assert.NoError(t, err, "conflict on volume create should be treated as idempotent success")
 }
 
 func TestStartContainer_NetworkConnectConflict(t *testing.T) {

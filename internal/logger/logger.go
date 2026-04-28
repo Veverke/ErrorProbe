@@ -27,6 +27,12 @@ func Init(path string, maxSizeMB int, maxBackups int) error {
 	mu.Lock()
 	defer mu.Unlock()
 
+	if roller != nil {
+		_ = roller.Close()
+		roller = nil
+	}
+	fileLogger = nil
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating log directory: %w", err)
 	}

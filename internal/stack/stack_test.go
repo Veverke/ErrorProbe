@@ -169,7 +169,7 @@ func TestPollUntilReady_BothReady(t *testing.T) {
 }
 
 func TestPollUntilReady_Timeout(t *testing.T) {
-	cfg := &config.Config{
+cfg := &config.Config{
 		Stack: config.Stack{
 			Loki:    config.LokiConfig{Port: 19501},
 			Grafana: config.GrafanaConfig{Port: 19502},
@@ -245,13 +245,14 @@ func buildTestConfig(t *testing.T, lokiPort, grafanaPort, ingestPort int) *confi
 	}
 }
 
-// overrideConfigsDir overrides the config dir to a temp directory by patching
-// the home directory to a known temp location. We use a temp dir as the output.
-func withTempConfigsDir(t *testing.T, cfg *config.Config) string {
+// setTempHome redirects os.UserHomeDir() to a temporary directory for the
+// duration of the test by overriding the HOME (and USERPROFILE on Windows)
+// environment variables, ensuring no files are written to the real user home.
+func setTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// We need to write the config files to a known temp dir.
-	// Since ConfigsDir() uses os.UserHomeDir(), we use a local helper instead.
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	return dir
 }
 
@@ -261,15 +262,8 @@ func noopPoll(_ context.Context, _ *config.Config, _ func(string)) error {
 }
 
 func TestUpCore_HappyPath(t *testing.T) {
-	// Use ports that are not in use and won't conflict with CheckPorts.
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19601, 19602, 19603)
-	configsDir := t.TempDir()
-	// Point cfg.ConfigsDir() output to our temp dir by overriding the home.
-	// Since we can't easily override ConfigsDir(), we use a workaround:
-	// generateConfigs and start containers use cfg.ConfigsDir() internally.
-	// For the test, we accept that config files go to the real ConfigsDir()
-	// (which points to ~.errorprobe/configs/), which is fine for a unit test.
-	_ = configsDir
 
 	stack.SetPollFn(noopPoll)
 	t.Cleanup(func() { stack.SetPollFn(stack.PollUntilReady) })
@@ -285,6 +279,7 @@ func TestUpCore_HappyPath(t *testing.T) {
 }
 
 func TestUpCore_AlreadyRunning(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19701, 19702, 19703)
 
 	stack.SetPollFn(noopPoll)
@@ -304,6 +299,7 @@ func TestUpCore_AlreadyRunning(t *testing.T) {
 }
 
 func TestUpCore_PingFails(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19801, 19802, 19803)
 
 	stack.SetPollFn(noopPoll)
@@ -318,6 +314,7 @@ func TestUpCore_PingFails(t *testing.T) {
 }
 
 func TestUpCore_PullFails(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19901, 19902, 19903)
 
 	stack.SetPollFn(noopPoll)
@@ -332,6 +329,7 @@ func TestUpCore_PullFails(t *testing.T) {
 }
 
 func TestDownCore_HappyPath(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19111, 19112, 19113)
 	cli := newMockDocker()
 
@@ -340,6 +338,7 @@ func TestDownCore_HappyPath(t *testing.T) {
 }
 
 func TestDownCore_WithPurge(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19121, 19122, 19123)
 	cli := newMockDocker()
 
@@ -348,6 +347,7 @@ func TestDownCore_WithPurge(t *testing.T) {
 }
 
 func TestDownCore_StopError(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19131, 19132, 19133)
 	cli := newMockDocker()
 	cli.stopErr = errors.New("cannot stop")
@@ -358,6 +358,7 @@ func TestDownCore_StopError(t *testing.T) {
 }
 
 func TestDownCore_RemoveContainerError(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19141, 19142, 19143)
 	cli := newMockDocker()
 	cli.removeErr = errors.New("cannot remove")
@@ -368,6 +369,7 @@ func TestDownCore_RemoveContainerError(t *testing.T) {
 }
 
 func TestDownCore_RemoveNetworkError(t *testing.T) {
+	setTempHome(t)
 	cfg := buildTestConfig(t, 19151, 19152, 19153)
 	cli := newMockDocker()
 	cli.removeNetErr = errors.New("network remove failed")
@@ -443,8 +445,7 @@ func TestUpCore_CreateNetworkFails(t *testing.T) {
 	cfg := buildTestConfig(t, 19681, 19682, 19683)
 	stack.SetPollFn(noopPoll)
 	t.Cleanup(func() { stack.SetPollFn(stack.PollUntilReady) })
-
-	cli := newMockDocker()
+cli := newMockDocker()
 	cli.netErr = errors.New("network create error")
 
 	err := stack.UpCore(context.Background(), cfg, cli, func(string) {})
@@ -522,6 +523,7 @@ func TestUpCore_PollFails(t *testing.T) {
 
 func TestUpCore_GenerateLokiFails(t *testing.T) {
 	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
 	t.Setenv("USERPROFILE", tmpHome)
 	// Block the entire .errorprobe directory by placing a file there.
 	ep := filepath.Join(tmpHome, ".errorprobe")
@@ -539,6 +541,7 @@ func TestUpCore_GenerateLokiFails(t *testing.T) {
 
 func TestUpCore_GenerateGrafanaFails(t *testing.T) {
 	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
 	t.Setenv("USERPROFILE", tmpHome)
 	// Pre-create the configs directory so GenerateLoki can write to it.
 	configsDir := filepath.Join(tmpHome, ".errorprobe", "configs")

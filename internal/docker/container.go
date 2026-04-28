@@ -112,11 +112,9 @@ func (c *Client) StartContainer(ctx context.Context, spec ContainerSpec) error {
 		_ = resp // ID available if needed
 	}
 
-	// Connect additional networks.
-	for i, netName := range spec.Networks {
-		if i == 0 {
-			continue // already set in NetworkingConfig
-		}
+	// Connect all requested networks, treating "already connected" conflicts as success.
+	// This ensures idempotency when an existing container is missing network attachments.
+	for _, netName := range spec.Networks {
 		if err := c.cli.NetworkConnect(ctx, netName, spec.Name, nil); err != nil {
 			if !errdefs.IsConflict(err) {
 				return fmt.Errorf("connecting container %s to network %s: %w", spec.Name, netName, err)
