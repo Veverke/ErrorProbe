@@ -16,15 +16,15 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 0 — Repository & Project Skeleton
+## Phase 0 — Repository & Project Skeleton *(completed 2026-04-28)*
 
 **Goal:** A compilable Go project with the right structure, ready to receive real implementation.  
 **No external services. No Docker interaction. Just a clean foundation.**
 
 ### Tasks
 
-- [ ] Initialise Go module (`go mod init github.com/errorprobe/errorprobe`)
-- [ ] Define top-level package structure:
+- [x] Initialise Go module (`go mod init github.com/errorprobe/errorprobe`)
+- [x] Define top-level package structure:
   ```
   cmd/                    ← Cobra command entrypoints
   internal/
@@ -40,33 +40,33 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
   assets/
     templates/            ← VRL, Loki, Grafana config templates
   ```
-- [ ] Wire Cobra root command and stub subcommands: `up`, `down`, `reload`, `update`, `list`, `status`, `watch`, `logs`, `check`
-- [ ] Implement `config` package: load `errorprobe.yaml` with precedence (project-local → global → built-in defaults), validate schema, expose typed struct
-- [ ] `version: 1` schema field enforced from day one; load fails with clear message on unknown version
-- [ ] Implement `logger` package: rotating file logger writing to `~/.errorprobe/logs/errorprobe.log`
-- [ ] State directory initialisation: ensure `~/.errorprobe/{configs,state,logs}/` exist on first run
-- [ ] CI: build compiles cleanly on Windows, zero lint errors
+- [x] Wire Cobra root command and stub subcommands: `up`, `down`, `reload`, `update`, `list`, `status`, `watch`, `logs`, `check`
+- [x] Implement `config` package: load `errorprobe.yaml` with precedence (project-local → global → built-in defaults), validate schema, expose typed struct
+- [x] `version: 1` schema field enforced from day one; load fails with clear message on unknown version
+- [x] Implement `logger` package: rotating file logger writing to `~/.errorprobe/logs/errorprobe.log`
+- [x] State directory initialisation: ensure `~/.errorprobe/{configs,state,logs}/` exist on first run
+- [x] CI: build compiles cleanly on Windows, zero lint errors
 
 **Exit criterion:** `errorprobe --help` runs and lists all subcommands. `errorprobe up` prints "not implemented" stub. Project builds with `go build ./...`.
 
 ---
 
-## Phase 1 — Stack Bootstrap Engine
+## Phase 1 — Stack Bootstrap Engine *(completed 2026-04-28)*
 
 **Goal:** `errorprobe up` pulls images and starts Vector, Loki, and Grafana as Docker containers. `errorprobe down` stops and removes them.
 
 ### Tasks
 
-- [ ] Implement `docker` package: Docker API client using `client.NewClientWithOpts(client.FromEnv)` (handles Windows named pipe automatically), connectivity check, image pull with progress reporting
-- [ ] Implement `configgen` package — Loki config generator: produces `loki-config.yaml` from `errorprobe.yaml` settings (port, retention), written to `~/.errorprobe/configs/`
-- [ ] Implement `configgen` package — Grafana datasource provisioner: produces `grafana/provisioning/datasources/loki.yaml`, auto-wires Loki as datasource
-- [ ] Implement `configgen` package — Vector config generator (stub for Phase 1): produces minimal `vector.toml` that starts without error; no sources yet (added in Phase 2)
-- [ ] Implement `stack` package: create dedicated Docker network (`errorprobe-net`), start Loki container (bind-mount config, named volume `errorprobe-loki-data`), start Grafana container (bind-mount provisioning, named volume `errorprobe-grafana-data`), start Vector container (bind-mount config)
-- [ ] Health-poll loop: ping Loki API (`GET /ready`) and Grafana API (`GET /api/health`) with timeout and retry; report progress to stdout
-- [ ] Port conflict detection: check configured ports before attempting to start; fail with clear message listing which port is in use
-- [ ] Idempotency: `errorprobe up` on an already-running stack is a no-op (detect running containers, report status, exit cleanly)
-- [ ] Implement `down` command: stop and remove the three managed containers; remove `errorprobe-net`; retain data volumes (explicit `--purge` flag removes volumes)
-- [ ] Startup output: report image pull progress, container start sequence, confirmation with Grafana URL
+- [x] Implement `docker` package: Docker API client using `client.NewClientWithOpts(client.FromEnv)` (handles Windows named pipe automatically), connectivity check, image pull with progress reporting
+- [x] Implement `configgen` package — Loki config generator: produces `loki-config.yaml` from `errorprobe.yaml` settings (port, retention), written to `~/.errorprobe/configs/`
+- [x] Implement `configgen` package — Grafana datasource provisioner: produces `grafana/provisioning/datasources/loki.yaml`, auto-wires Loki as datasource
+- [x] Implement `configgen` package — Vector config generator (stub for Phase 1): produces minimal `vector.toml` that starts without error; no sources yet (added in Phase 2)
+- [x] Implement `stack` package: create dedicated Docker network (`errorprobe-net`), start Loki container (bind-mount config, named volume `errorprobe-loki-data`), start Grafana container (bind-mount provisioning, named volume `errorprobe-grafana-data`), start Vector container (bind-mount config)
+- [x] Health-poll loop: ping Loki API (`GET /ready`) and Grafana API (`GET /api/health`) with timeout and retry; report progress to stdout
+- [x] Port conflict detection: check configured ports before attempting to start; fail with clear message listing which port is in use
+- [x] Idempotency: `errorprobe up` on an already-running stack is a no-op (detect running containers, report status, exit cleanly)
+- [x] Implement `down` command: stop and remove the three managed containers; remove `errorprobe-net`; retain data volumes (explicit `--purge` flag removes volumes)
+- [x] Startup output: report image pull progress, container start sequence, confirmation with Grafana URL
 
 **Exit criterion:** `errorprobe up` → Loki, Grafana, and Vector all running as Docker containers. Grafana is reachable at `http://localhost:3000`. Loki datasource is pre-wired and works in Grafana Explore. `errorprobe down` cleanly removes the stack.
 

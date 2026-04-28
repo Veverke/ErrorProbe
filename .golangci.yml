@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gofmt
+
+issues:
+  exclude-rules:
+    # Cobra RunE functions often ignore args by design.
+    - path: cmd/
+      linters:
+        - errcheck

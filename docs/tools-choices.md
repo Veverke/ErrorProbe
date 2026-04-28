@@ -64,6 +64,66 @@ Methodology: 5 state-of-the-art open-source tools ranked per domain (best → wo
 
 ---
 
+## Domain 6 — CLI Framework (Go)
+
+| # | Tool | License | Notes |
+|---|------|---------|-------|
+| 1 | **Cobra** (spf13/cobra) | Apache 2.0 | De-facto standard Go CLI framework. Used by kubectl, docker, helm. Subcommands, persistent flags, shell completion. |
+| 2 | **urfave/cli** | MIT | Minimal and pragmatic. Popular alternative to Cobra. No nested subcommand model. |
+| 3 | **Kong** | MIT | Struct-tag driven. Clean declarative API. Less ecosystem adoption than Cobra. |
+| 4 | **Kingpin** | MIT | POSIX-compliant flag parsing. Mature but lower activity. |
+| 5 | **pflag** | BSD-3-Clause | Low-level POSIX flag library. Building block used by Cobra, not a standalone CLI framework. |
+
+---
+
+## Domain 7 — TUI Library (Go)
+
+| # | Tool | License | Notes |
+|---|------|---------|-------|
+| 1 | **Bubbletea** (charmbracelet/bubbletea) | MIT | Elm-architecture TUI framework. Clean model/update/view pattern. In-place redraw, terminal resize and clean exit handled. |
+| 2 | **tview** | MIT | Rich widget library (tables, forms, modals). More complex layout integration than Bubbletea. |
+| 3 | **gocui** | Apache 2.0 | Panel-based TUI. Used by Lazygit. Less opinionated layout model. |
+| 4 | **termui** | MIT | Dashboard widgets (charts, gauges). Purpose-built for metrics display, not general interactive TUI. |
+| 5 | **tcell** | Apache 2.0 | Low-level terminal primitives. No widget abstractions — building block only. |
+
+---
+
+## Domain 8 — Config Management (Go)
+
+| # | Tool | License | Notes |
+|---|------|---------|-------|
+| 1 | **Viper** (spf13/viper) | MIT | De-facto standard. YAML/TOML/JSON/ENV support, flag binding, layered precedence. First-class Cobra companion. |
+| 2 | **koanf** | MIT | Lightweight and modular. Cleaner API than Viper. Smaller ecosystem. Growing adoption. |
+| 3 | **envconfig** | MIT | Struct-tag driven env-var parsing only. No file config support — too limited for `errorprobe.yaml`. |
+| 4 | **godotenv** | MIT | .env file loading only. Single format; no layered precedence chain. |
+| 5 | **cleanenv** | MIT | Minimal struct-tag config from files + env. Simpler than Viper but lacks the precedence model needed. |
+
+---
+
+## Domain 9 — Log Rotation (Go)
+
+| # | Tool | License | Notes |
+|---|------|---------|-------|
+| 1 | **Lumberjack** (natefinch/lumberjack) | MIT | Standard Go log rotation. Size/age/count policies. Used as an `io.Writer` with `log/slog` or any Go logger. |
+| 2 | **file-rotatelogs** (lestrrat-go) | MIT | Time-based rotation. More complex configuration than Lumberjack. |
+| 3 | **logrotate** (system tool) | GPL v2 | OS-level rotation daemon. Requires system configuration — not embeddable in a self-contained binary. |
+| 4 | **zap** (with Lumberjack writer) | MIT | Uber's structured logger; rotation delegated to Lumberjack. Heavier than `log/slog`. |
+| 5 | **zerolog** (with external writer) | MIT | Very fast structured logger. No built-in rotation; requires an external writer. |
+
+---
+
+## Domain 10 — Testing Framework (Go)
+
+| # | Tool | License | Notes |
+|---|------|---------|-------|
+| 1 | **testify** (stretchr/testify) | MIT | Standard Go assertion library. `assert`, `require`, `mock`, `suite` packages. Near-universal adoption. |
+| 2 | **gomock** (uber-go/mock) | Apache 2.0 | Interface-based mocks, code-generated. Official Google lineage. |
+| 3 | **ginkgo + gomega** | MIT | BDD-style test framework. Expressive specs; more ceremony than testify for unit tests. |
+| 4 | **gocheck** | BSD-2-Clause | Test suites and assertions. Less active than testify. |
+| 5 | **go-cmp** | BSD-3-Clause | Deep struct comparison from Google. Best as a complement to testify, not a standalone framework. |
+
+---
+
 ## Selected Stack (V1)
 
 | Domain | Selected Tool | Runner-up |
@@ -73,6 +133,11 @@ Methodology: 5 state-of-the-art open-source tools ranked per domain (best → wo
 | Parsing | Vector (VRL) | Fluent Bit |
 | Storage | Loki | OpenSearch |
 | Presentation | Grafana OSS | Dozzle |
+| CLI Framework | Cobra | urfave/cli |
+| TUI Library | Bubbletea | tview |
+| Config Management | Viper | koanf |
+| Log Rotation | Lumberjack | file-rotatelogs |
+| Testing Framework | testify | gomock |
 
 > Vector covers both collection and parsing — one tool owns the pipeline from raw container log to normalized JSON. Architecturally clean.
 
@@ -93,6 +158,11 @@ Methodology: 5 state-of-the-art open-source tools ranked per domain (best → wo
 | Dozzle | MIT |
 | OpenSearch | Apache 2.0 |
 | SigNoz | MIT |
+| Cobra | Apache 2.0 |
+| Bubbletea | MIT |
+| Viper | MIT |
+| Lumberjack | MIT |
+| testify | MIT |
 
 ### Tools requiring attention
 

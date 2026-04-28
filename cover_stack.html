@@ -1,0 +1,453 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>stack: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/errorprobe/errorprobe/internal/stack/down.go (72.2%)</option>
+				
+				<option value="file1">github.com/errorprobe/errorprobe/internal/stack/health.go (100.0%)</option>
+				
+				<option value="file2">github.com/errorprobe/errorprobe/internal/stack/ports.go (100.0%)</option>
+				
+				<option value="file3">github.com/errorprobe/errorprobe/internal/stack/up.go (82.3%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package stack
+
+import (
+        "context"
+        "fmt"
+
+        "github.com/errorprobe/errorprobe/internal/config"
+        "github.com/errorprobe/errorprobe/internal/docker"
+)
+
+// Down stops and removes the observability stack containers and the shared network.
+// Order: Vector, Grafana, Loki (reverse of start).
+// If purge is true, the named data volumes are also removed.
+// The function is idempotent: absent containers/networks/volumes are silently skipped.
+func Down(ctx context.Context, cfg *config.Config, purge bool) error <span class="cov0" title="0">{
+        cli, err := docker.NewClient()
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("connecting to docker: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer cli.Close()
+        return downCore(ctx, cfg, cli, purge)</span>
+}
+
+// downCore is the testable implementation of Down. It receives an
+// already-created Docker client so that tests can inject a mock.
+func downCore(ctx context.Context, _ *config.Config, cli docker.DockerAPI, purge bool) error <span class="cov8" title="1">{
+        const stopTimeout = 10
+
+        // Stop and remove in reverse order.
+        for _, name := range []string{ContainerVector, ContainerGrafana, ContainerLoki} </span><span class="cov8" title="1">{
+                if err := cli.StopContainer(ctx, name, stopTimeout); err != nil </span><span class="cov8" title="1">{
+                        return err
+                }</span>
+                <span class="cov8" title="1">if err := cli.RemoveContainer(ctx, name, false); err != nil </span><span class="cov8" title="1">{
+                        return err
+                }</span>
+        }
+
+        // Remove the shared network.
+        <span class="cov8" title="1">if err := cli.RemoveNetwork(ctx, NetworkName); err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        // Optionally purge data volumes.
+        <span class="cov8" title="1">if purge </span><span class="cov8" title="1">{
+                for _, vol := range []string{VolumeLokiData, VolumeGrafanaData} </span><span class="cov8" title="1">{
+                        if err := cli.RemoveVolume(ctx, vol); err != nil </span><span class="cov8" title="1">{
+                                return err
+                        }</span>
+                }
+        }
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package stack
+
+import (
+        "context"
+        "fmt"
+        "net/http"
+        "time"
+
+        "github.com/errorprobe/errorprobe/internal/config"
+)
+
+// PollUntilReady polls the Loki and Grafana health endpoints until both respond
+// successfully or the context deadline is exceeded.
+// onStatus is called as each service becomes available.
+func PollUntilReady(ctx context.Context, cfg *config.Config, onStatus func(string)) error <span class="cov8" title="1">{
+        type service struct {
+                name string
+                url  string
+                done bool
+        }
+        services := []*service{
+                {
+                        name: "loki",
+                        url:  fmt.Sprintf("http://127.0.0.1:%d/ready", cfg.Stack.Loki.Port),
+                },
+                {
+                        name: "grafana",
+                        url:  fmt.Sprintf("http://127.0.0.1:%d/api/health", cfg.Stack.Grafana.Port),
+                },
+        }
+
+        client := &amp;http.Client{Timeout: 2 * time.Second}
+        ticker := time.NewTicker(time.Second)
+        defer ticker.Stop()
+
+        for </span><span class="cov8" title="1">{
+                allDone := true
+                for _, svc := range services </span><span class="cov8" title="1">{
+                        if svc.done </span><span class="cov8" title="1">{
+                                continue</span>
+                        }
+                        <span class="cov8" title="1">allDone = false
+                        resp, err := client.Get(svc.url)
+                        if err == nil &amp;&amp; resp.StatusCode == http.StatusOK </span><span class="cov8" title="1">{
+                                _ = resp.Body.Close()
+                                svc.done = true
+                                if onStatus != nil </span><span class="cov8" title="1">{
+                                        onStatus(svc.name + ": ready")
+                                }</span>
+                        } else<span class="cov8" title="1"> if resp != nil </span><span class="cov8" title="1">{
+                                _ = resp.Body.Close()
+                        }</span>
+                }
+                <span class="cov8" title="1">if allDone </span><span class="cov8" title="1">{
+                        return nil
+                }</span>
+
+                <span class="cov8" title="1">select </span>{
+                case &lt;-ctx.Done():<span class="cov8" title="1">
+                        var missing []string
+                        for _, svc := range services </span><span class="cov8" title="1">{
+                                if !svc.done </span><span class="cov8" title="1">{
+                                        missing = append(missing, svc.name)
+                                }</span>
+                        }
+                        <span class="cov8" title="1">return fmt.Errorf("timed out waiting for services to become ready: %v", missing)</span>
+                case &lt;-ticker.C:<span class="cov8" title="1"></span>
+                }
+        }
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package stack
+
+import (
+        "fmt"
+        "net"
+        "strings"
+
+        "github.com/errorprobe/errorprobe/internal/config"
+)
+
+// CheckPorts verifies that the ports required by the stack are not already in
+// use on the host. It returns an error listing every conflicting port.
+func CheckPorts(cfg *config.Config) error <span class="cov8" title="1">{
+        ports := map[string]int{
+                "loki":    cfg.Stack.Loki.Port,
+                "grafana": cfg.Stack.Grafana.Port,
+                "ingest":  cfg.Stack.Ingest.Port,
+        }
+
+        var conflicts []string
+        for name, port := range ports </span><span class="cov8" title="1">{
+                addr := fmt.Sprintf("127.0.0.1:%d", port)
+                ln, err := net.Listen("tcp", addr)
+                if err != nil </span><span class="cov8" title="1">{
+                        conflicts = append(conflicts, fmt.Sprintf("%s (port %d)", name, port))
+                        continue</span>
+                }
+                <span class="cov8" title="1">_ = ln.Close()</span>
+        }
+
+        <span class="cov8" title="1">if len(conflicts) &gt; 0 </span><span class="cov8" title="1">{
+                return fmt.Errorf("port conflict: the following ports are already in use: %s", strings.Join(conflicts, ", "))
+        }</span>
+        <span class="cov8" title="1">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package stack
+
+import (
+        "context"
+        "fmt"
+        "path/filepath"
+        "time"
+
+        "github.com/errorprobe/errorprobe/internal/config"
+        "github.com/errorprobe/errorprobe/internal/configgen"
+        "github.com/errorprobe/errorprobe/internal/docker"
+)
+
+// pollFn is the health-check implementation used by upCore.
+// It may be replaced in tests to avoid real HTTP polling.
+var pollFn = PollUntilReady
+
+// Up brings up the full observability stack (Vector, Loki, Grafana).
+// onStatus is called with progress messages. It is safe to call against
+// an already-running stack — it is fully idempotent.
+func Up(ctx context.Context, cfg *config.Config, onStatus func(string)) error <span class="cov0" title="0">{
+        cli, err := docker.NewClient()
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("connecting to docker: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer cli.Close()
+        return upCore(ctx, cfg, cli, onStatus)</span>
+}
+
+// upCore is the testable implementation of Up. It receives an already-created
+// Docker client so that tests can inject a mock.
+func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onStatus func(string)) error <span class="cov8" title="1">{
+        // 1. Verify Docker daemon is reachable.
+        onStatus("checking docker daemon…")
+        if err := cli.Ping(ctx); err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        // 2. Check port conflicts before pulling images (fail fast).
+        <span class="cov8" title="1">onStatus("checking port availability…")
+        if err := CheckPorts(cfg); err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        // 3. Idempotency: if all three containers are running, nothing to do.
+        <span class="cov8" title="1">allRunning := true
+        for _, name := range []string{ContainerLoki, ContainerGrafana, ContainerVector} </span><span class="cov8" title="1">{
+                running, err := cli.ContainerRunning(ctx, name)
+                if err != nil </span><span class="cov8" title="1">{
+                        return err
+                }</span>
+                <span class="cov8" title="1">if !running </span><span class="cov8" title="1">{
+                        allRunning = false
+                        break</span>
+                }
+        }
+        <span class="cov8" title="1">if allRunning </span><span class="cov8" title="1">{
+                onStatus("stack already running — use 'errorprobe down' to stop it")
+                return nil
+        }</span>
+
+        // 4. Pull images.
+        <span class="cov8" title="1">images := []struct{ label, image string }{
+                {"loki", cfg.Stack.Loki.Image},
+                {"grafana", cfg.Stack.Grafana.Image},
+                {"vector", cfg.Stack.Vector.Image},
+        }
+        for _, img := range images </span><span class="cov8" title="1">{
+                onStatus(fmt.Sprintf("pulling %s image (%s)…", img.label, img.image))
+                if err := cli.PullImage(ctx, img.image, func(line string) </span><span class="cov8" title="1">{
+                        onStatus("  " + line)
+                }</span>); err != nil <span class="cov8" title="1">{
+                        return fmt.Errorf("pulling %s: %w", img.label, err)
+                }</span>
+        }
+
+        // 5. Generate configs.
+        <span class="cov8" title="1">configsDir := cfg.ConfigsDir()
+        onStatus("generating configs…")
+        if err := configgen.GenerateLoki(cfg, configsDir); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("generating loki config: %w", err)
+        }</span>
+        <span class="cov8" title="1">if err := configgen.GenerateGrafanaDatasource(cfg, configsDir); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("generating grafana datasource: %w", err)
+        }</span>
+        <span class="cov8" title="1">if err := configgen.GenerateVector(cfg, configsDir, []string{}); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("generating vector config: %w", err)
+        }</span>
+
+        // 6. Create network.
+        <span class="cov8" title="1">onStatus("ensuring docker network…")
+        if err := cli.CreateNetwork(ctx, NetworkName); err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        // 7. Create volumes.
+        <span class="cov8" title="1">for _, vol := range []string{VolumeLokiData, VolumeGrafanaData} </span><span class="cov8" title="1">{
+                if err := cli.CreateVolume(ctx, vol); err != nil </span><span class="cov8" title="1">{
+                        return err
+                }</span>
+        }
+
+        // 8. Start Loki.
+        <span class="cov8" title="1">onStatus("starting loki…")
+        lokiConfigPath := filepath.Join(configsDir, "loki-config.yaml")
+        if err := cli.StartContainer(ctx, docker.ContainerSpec{
+                Name:  ContainerLoki,
+                Image: cfg.Stack.Loki.Image,
+                Cmd:   []string{"-config.file=/etc/loki/local-config.yaml"},
+                Ports: []docker.PortBinding{
+                        {HostPort: fmt.Sprintf("%d", cfg.Stack.Loki.Port), ContainerPort: "3100"},
+                },
+                Mounts: []docker.Mount{
+                        {Source: lokiConfigPath, Target: "/etc/loki/local-config.yaml", ReadOnly: true},
+                },
+                Volumes: []docker.VolumeMount{
+                        {Name: VolumeLokiData, Target: "/loki"},
+                },
+                Networks: []string{NetworkName},
+                Labels:   managedLabel(),
+        }); err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("starting loki: %w", err)
+        }</span>
+
+        // 9. Start Grafana.
+        <span class="cov8" title="1">onStatus("starting grafana…")
+        grafanaProvisioningDir := filepath.Join(configsDir, "grafana", "provisioning")
+        if err := cli.StartContainer(ctx, docker.ContainerSpec{
+                Name:  ContainerGrafana,
+                Image: cfg.Stack.Grafana.Image,
+                Ports: []docker.PortBinding{
+                        {HostPort: fmt.Sprintf("%d", cfg.Stack.Grafana.Port), ContainerPort: "3000"},
+                },
+                Mounts: []docker.Mount{
+                        {Source: grafanaProvisioningDir, Target: "/etc/grafana/provisioning", ReadOnly: true},
+                },
+                Volumes: []docker.VolumeMount{
+                        {Name: VolumeGrafanaData, Target: "/var/lib/grafana"},
+                },
+                Networks: []string{NetworkName},
+                Labels:   managedLabel(),
+        }); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("starting grafana: %w", err)
+        }</span>
+
+        // 10. Start Vector.
+        <span class="cov8" title="1">onStatus("starting vector…")
+        vectorConfigPath := filepath.Join(configsDir, "vector.toml")
+        if err := cli.StartContainer(ctx, docker.ContainerSpec{
+                Name:  ContainerVector,
+                Image: cfg.Stack.Vector.Image,
+                Mounts: []docker.Mount{
+                        {Source: vectorConfigPath, Target: "/etc/vector/vector.toml", ReadOnly: true},
+                },
+                Networks: []string{NetworkName},
+                Labels:   managedLabel(),
+        }); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("starting vector: %w", err)
+        }</span>
+
+        // 11. Poll until ready (60 s timeout).
+        <span class="cov8" title="1">onStatus("waiting for services to become ready…")
+        pollCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+        defer cancel()
+        if err := pollFn(pollCtx, cfg, onStatus); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // 12. Final status.
+        <span class="cov8" title="1">onStatus(fmt.Sprintf("stack ready — Grafana: http://localhost:%d", cfg.Stack.Grafana.Port))
+        return nil</span>
+}
+
+// managedLabel returns the standard label applied to all errorprobe containers.
+func managedLabel() map[string]string <span class="cov8" title="1">{
+        return map[string]string{"managed-by": "errorprobe"}
+}</span>
+
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
