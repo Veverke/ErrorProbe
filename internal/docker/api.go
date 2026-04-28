@@ -1,6 +1,10 @@
 package docker
 
-import "context"
+import (
+	"context"
+
+	"github.com/docker/docker/api/types/container"
+)
 
 // DockerAPI defines all Docker operations used by errorprobe.
 // It is implemented by *Client and can be mocked in unit tests.
@@ -12,6 +16,8 @@ type DockerAPI interface {
 	ContainerRunning(ctx context.Context, name string) (bool, error)
 	ContainerID(ctx context.Context, name string) (string, error)
 	SendSignal(ctx context.Context, containerName string, signal string) error
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
+	ContainerInspect(ctx context.Context, id string) (container.InspectResponse, error)
 
 	NetworkExists(ctx context.Context, name string) (bool, error)
 	CreateNetwork(ctx context.Context, name string) error

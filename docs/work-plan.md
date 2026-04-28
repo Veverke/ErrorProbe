@@ -72,19 +72,19 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 2 — Container Discovery
+## Phase 2 — Container Discovery *(completed 2026-04-29)*
 
 **Goal:** ErrorProbe discovers all running user containers, applies watch policy, generates a Vector config scoped to the approved set, and reloads Vector when the set changes.
 
 ### Tasks
 
-- [ ] Implement `discovery` package: list all running containers via Docker API, extract metadata (name, image, labels, start time, restart count, health probe status)
-- [ ] Apply watch policy from `errorprobe.yaml`: filter by `containers.exclude` glob patterns; resolve final approved set
-- [ ] Persist approved set to `~/.errorprobe/state/containers.json`
-- [ ] Implement Vector config generation (full): produce `vector.toml` with `docker_logs` source scoped to approved container set (by name list); include VRL transform for severity inference using patterns from `errorprobe.yaml`
-- [ ] VRL transform: normalise all log lines to schema `{ timestamp, container, level, message, raw }`; apply severity inference against `detection.severity_patterns`; emit to both Loki sink and ErrorProbe HTTP sink
-- [ ] Reconciliation loop: run discovery every 5 seconds; diff against previous approved set; on change, regenerate Vector config and send `SIGHUP` to Vector container via Docker API
-- [ ] Implement `errorprobe list` command: tabular output — container name, image, status, infra health (running / restarting / exited), watching (yes/no)
+- [x] Implement `discovery` package: list all running containers via Docker API, extract metadata (name, image, labels, start time, restart count, health probe status)
+- [x] Apply watch policy from `errorprobe.yaml`: filter by `containers.exclude` glob patterns; resolve final approved set
+- [x] Persist approved set to `~/.errorprobe/state/containers.json`
+- [x] Implement Vector config generation (full): produce `vector.toml` with `docker_logs` source scoped to approved container set (by name list); include VRL transform for severity inference using patterns from `errorprobe.yaml`
+- [x] VRL transform: normalise all log lines to schema `{ timestamp, container, level, message, raw }`; apply severity inference against `detection.severity_patterns`; emit to both Loki sink and ErrorProbe HTTP sink
+- [x] Reconciliation loop: run discovery every 5 seconds; diff against previous approved set; on change, regenerate Vector config and send `SIGHUP` to Vector container via Docker API
+- [x] Implement `errorprobe list` command: tabular output — container name, image, status, infra health (running / restarting / exited), watching (yes/no)
 - [ ] Validate end-to-end: logs from a running container flow through Vector → Loki; query Loki LogQL to confirm labels (`container`, `level`) are correct
 
 **Exit criterion:** `errorprobe list` shows all running containers with correct watch status. Any log line from a watched container appears in Loki with correct `container` and `level` labels within 2 seconds. Starting a new container while `errorprobe` is running causes it to appear in the next reconciliation cycle.

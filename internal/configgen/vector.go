@@ -8,9 +8,14 @@ import (
 	"github.com/errorprobe/errorprobe/internal/config"
 )
 
+// VectorGenerator is the interface for generating vector.toml.
+// It allows callers (including the reconciler) to inject a fake in tests.
+type VectorGenerator interface {
+	GenerateVector(cfg *config.Config, outputDir string, containers []string) error
+}
+
 // GenerateVector writes vector.toml to outputDir using the embedded template.
-// The containers parameter will be used in Phase 2 to inject sources;
-// for Phase 1 it is always empty. The file is always overwritten.
+// containers is the list of approved container names to include in the source.
 func GenerateVector(cfg *config.Config, outputDir string, containers []string) error {
 	tmpl, err := template.ParseFS(templateFS, "templates/vector.toml.tmpl")
 	if err != nil {
@@ -18,11 +23,19 @@ func GenerateVector(cfg *config.Config, outputDir string, containers []string) e
 	}
 
 	data := struct {
-		Containers []string
-		LokiPort   int
+		Containers    []string
+		LokiPort      int
+		IngestBind    string
+		IngestPort    int
+		ErrorPatterns []string
+		WarnPatterns  []string
 	}{
-		Containers: containers,
-		LokiPort:   cfg.Stack.Loki.Port,
+		Containers:    containers,
+		LokiPort:      cfg.Stack.Loki.Port,
+		IngestBind:    cfg.Stack.Ingest.Bind,
+		IngestPort:    cfg.Stack.Ingest.Port,
+		ErrorPatterns: cfg.Detection.SeverityPatterns.Error,
+		WarnPatterns:  cfg.Detection.SeverityPatterns.Warn,
 	}
 
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {

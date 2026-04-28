@@ -34,12 +34,14 @@ type fakeSDK struct {
 	pullReader     io.ReadCloser
 	pullErr        error
 
-	containers map[string]*fakeContainer
-	killErr    error
-	createErr  error
-	startErr   error
-	stopErr    error
-	removeErr  error
+	containers    map[string]*fakeContainer
+	containerList []container.Summary
+	listErr       error
+	killErr       error
+	createErr     error
+	startErr      error
+	stopErr       error
+	removeErr     error
 
 	networks     map[string]bool
 	createNetErr error
@@ -105,6 +107,10 @@ func (f *fakeSDK) ContainerInspect(_ context.Context, name string) (container.In
 }
 
 func (f *fakeSDK) ContainerKill(_ context.Context, _ string, _ string) error { return f.killErr }
+
+func (f *fakeSDK) ContainerList(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
+	return f.containerList, f.listErr
+}
 
 func (f *fakeSDK) ContainerCreate(_ context.Context, _ *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, name string) (container.CreateResponse, error) {
 	if f.createErr != nil {

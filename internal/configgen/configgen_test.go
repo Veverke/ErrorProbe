@@ -220,8 +220,8 @@ func TestGenerateVector_Stub_ValidToml(t *testing.T) {
 
 	sinks, ok := parsed["sinks"].(map[string]interface{})
 	require.True(t, ok, "expected [sinks] table")
-	_, ok = sinks["console"]
-	assert.True(t, ok, "expected [sinks.console]")
+	_, ok = sinks["loki"]
+	assert.True(t, ok, "expected [sinks.loki]")
 }
 
 // TestGenerateVector_FileCreateFails verifies error propagation.
@@ -321,4 +321,98 @@ func TestGenerateVector_ExecuteTemplateFails(t *testing.T) {
 	err := configgen.GenerateVector(cfg, t.TempDir(), []string{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rendering vector template")
+}
+
+// ---------------------------------------------------------------------------
+// T2.12 — Vector full config generator tests
+// ---------------------------------------------------------------------------
+
+func buildConfigWithPatterns(lokiPort, ingestPort int, errorPatterns, warnPatterns []string) *config.Config {
+	cfg := buildConfig(lokiPort, "72h", 3000)
+	cfg.Stack.Ingest = config.IngestConfig{Bind: "127.0.0.1", Port: ingestPort}
+	cfg.Detection = config.Detection{
+		SeverityPatterns: config.SeverityPatterns{
+			Error: errorPatterns,
+			Warn:  warnPatterns,
+		},
+	}
+	return cfg
+}
+
+func TestGenerateVector_ContainerListInjected(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfigWithPatterns(3100, 8080, nil, nil)
+	containers := []string{"payments-api", "user-service"}
+
+	require.NoError(t, configgen.GenerateVector(cfg, dir, containers))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	s := string(content)
+	assert.Contains(t, s, `"payments-api"`)
+	assert.Contains(t, s, `"user-service"`)
+}
+
+func TestGenerateVector_SeverityPatternsFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfigWithPatterns(3100, 8080, []string{"FATAL|ERROR"}, []string{"WARN"})
+
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	s := string(content)
+	assert.Contains(t, s, "FATAL|ERROR")
+	assert.Contains(t, s, "WARN")
+}
+
+func TestGenerateVector_LokiSinkURL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfigWithPatterns(9999, 8080, nil, nil)
+
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "loki:9999")
+}
+
+func TestGenerateVector_IngestSinkURL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfigWithPatterns(3100, 7777, nil, nil)
+
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "7777/ingest")
+}
+
+func TestGenerateVector_EmptyContainers_ValidToml(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfigWithPatterns(3100, 8080, nil, nil)
+
+	require.NoError(t, configgen.GenerateVector(cfg, dir, []string{}))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+
+	var parsed map[string]interface{}
+	err = toml.NewDecoder(strings.NewReader(string(content))).Decode(&parsed)
+	assert.NoError(t, err, "empty container list should still produce valid TOML")
+}
+
+func TestGenerateVector_OutputIsValidToml(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfigWithPatterns(3100, 8080, []string{"ERROR|FATAL"}, []string{"WARN"})
+	containers := []string{"web", "worker"}
+
+	require.NoError(t, configgen.GenerateVector(cfg, dir, containers))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+
+	var parsed map[string]interface{}
+	err = toml.NewDecoder(strings.NewReader(string(content))).Decode(&parsed)
+	assert.NoError(t, err, "full vector config must be valid TOML")
 }
