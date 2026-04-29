@@ -1,4 +1,4 @@
-# Phase 2 — Container Discovery
+# Phase 2 — Container Discovery *(completed 2026-04-29)*
 
 **Goal:** ErrorProbe discovers all running user containers, applies watch policy, generates a Vector config scoped to the approved set, and reloads Vector when the set changes.  
 **Prerequisite:** Phase 1 complete.

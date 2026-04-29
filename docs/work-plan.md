@@ -72,7 +72,7 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 2 — Container Discovery *(in progress)*
+## Phase 2 — Container Discovery *(completed 2026-04-29)*
 
 **Goal:** ErrorProbe discovers all running user containers, applies watch policy, generates a Vector config scoped to the approved set, and reloads Vector when the set changes.
 
@@ -85,7 +85,7 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 - [x] VRL transform: normalise all log lines to schema `{ timestamp, container, level, message, raw }`; apply severity inference against `detection.severity_patterns`; emit to both Loki sink and ErrorProbe HTTP sink
 - [x] Reconciliation loop: run discovery every 5 seconds; diff against previous approved set; on change, regenerate Vector config and send `SIGHUP` to Vector container via Docker API
 - [x] Implement `errorprobe list` command: tabular output — container name, image, status, infra health (running / restarting / exited), watching (yes/no)
-- [ ] Validate end-to-end: logs from a running container flow through Vector → Loki; query Loki LogQL to confirm labels (`container`, `level`) are correct
+- [x] Validate end-to-end: logs from a running container flow through Vector → Loki; query Loki LogQL to confirm labels (`container`, `level`) are correct
 
 **Exit criterion:** `errorprobe list` shows all running containers with correct watch status. Any log line from a watched container appears in Loki with correct `container` and `level` labels within 2 seconds. Starting a new container while `errorprobe` is running causes it to appear in the next reconciliation cycle.
 
