@@ -120,4 +120,3 @@ func init() {
 	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "output full health snapshot as JSON")
 	statusCmd.Flags().StringVar(&statusReset, "reset", "", "reset health state for the named container")
 }
-

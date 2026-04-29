@@ -50,4 +50,3 @@ for all watched containers in real time, updating as new log events arrive.`,
 		return nil
 	},
 }
-
