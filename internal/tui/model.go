@@ -243,7 +243,7 @@ func (m Model) renderEKG(width int) [4]string {
 	if width <= 0 {
 		width = 80
 	}
-	repeats := (width/ekgTileWidth) + 3
+	repeats := (width / ekgTileWidth) + 3
 	var rows [4]string
 	for r := 0; r < 4; r++ {
 		repeated := strings.Repeat(ekgTile[r], repeats)
