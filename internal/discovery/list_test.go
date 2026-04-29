@@ -66,7 +66,7 @@ func TestListRunning_ExcludesManagedContainers(t *testing.T) {
 				Names:  []string{"/errorprobe-vector"},
 				Image:  "vector:latest",
 				State:  "running",
-				Labels: map[string]string{"com.errorprobe.managed": "true"},
+				Labels: map[string]string{"managed-by": "errorprobe"},
 			},
 		},
 	}
