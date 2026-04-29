@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,12 +22,21 @@ type refreshMsg struct {
 // tickMsg is sent on each poll tick.
 type tickMsg time.Time
 
-// spinMsg drives the header dot animation.
-type spinMsg struct{}
+// ekgMsg drives the EKG scroll animation.
+type ekgMsg struct{}
 
-const spinInterval = 500 * time.Millisecond
+const ekgInterval = 80 * time.Millisecond
 
-var dotFrames = [3]string{" .", " . .", " . . ."}
+// ekgTile is one full cardiac-cycle tile (40 chars wide, 4 rows).
+// Row 0 = top (R-spike tip); Row 3 = bottom (S-wave dip below baseline).
+var ekgTile = [4]string{
+	`              /\                        `,
+	`    /\       /  \          /~~~\        `,
+	`---/  \-----/    \        /     \-------`,
+	`                  \______/              `,
+}
+
+const ekgTileWidth = 40
 
 // Model is the Bubbletea model for the watch TUI.
 type Model struct {
@@ -39,7 +49,7 @@ type Model struct {
 	width        int
 	height       int
 	quitting     bool
-	spinFrame    int
+	ekgOffset    int
 }
 
 var (
@@ -65,7 +75,7 @@ func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }),
-		tea.Tick(spinInterval, func(time.Time) tea.Msg { return spinMsg{} }),
+		tea.Tick(ekgInterval, func(time.Time) tea.Msg { return ekgMsg{} }),
 	)
 }
 
@@ -115,9 +125,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return tickMsg(t)
 		})
 
-	case spinMsg:
-		m.spinFrame = (m.spinFrame + 1) % len(dotFrames)
-		return m, tea.Tick(spinInterval, func(time.Time) tea.Msg { return spinMsg{} })
+	case ekgMsg:
+		m.ekgOffset = (m.ekgOffset + 2) % ekgTileWidth
+		return m, tea.Tick(ekgInterval, func(time.Time) tea.Msg { return ekgMsg{} })
 
 	case refreshMsg:
 		m.snap = msg.snap
@@ -141,15 +151,32 @@ func (m Model) View() string {
 	}
 
 	header := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n)) +
-		dimStyle.Render(dotFrames[m.spinFrame]) +
-		"      " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [q] quit")
+		"          " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [q] quit")
+
+	// EKG color reflects overall health: green = all OK, yellow = has errors.
+	hasErrors := false
+	for _, ch := range m.snap.Containers {
+		if ch.State == health.StateHasErrors {
+			hasErrors = true
+			break
+		}
+	}
+	ekgColor := lipgloss.Color("10") // bright green
+	if hasErrors {
+		ekgColor = lipgloss.Color("11") // bright yellow
+	}
+	ekgSty := lipgloss.NewStyle().Foreground(ekgColor)
+	ekgRows := m.renderEKG(m.width)
 
 	sep := borderStyle.Render("─")
 	colFmt := "%-22s  %-20s  %-12s  %-22s"
 	colHeader := fmt.Sprintf(colFmt, "CONTAINER", "FUNCTIONAL", "INFRA", "LAST ERROR")
 
-	rows := make([]string, 0, len(names)+2)
+	rows := make([]string, 0, len(names)+6)
 	rows = append(rows, header)
+	for _, row := range ekgRows {
+		rows = append(rows, ekgSty.Render(row))
+	}
 	rows = append(rows, borderStyle.Render(repeat("─", 82)))
 	rows = append(rows, colHeader)
 	rows = append(rows, borderStyle.Render(repeat(sep, 82)))
@@ -207,6 +234,26 @@ func (m Model) sortedNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// renderEKG returns a 4-row EKG frame by slicing a scrolling window over
+// the tiled cardiac-cycle pattern. All tile characters are ASCII so byte
+// indexing is safe.
+func (m Model) renderEKG(width int) [4]string {
+	if width <= 0 {
+		width = 80
+	}
+	repeats := (width/ekgTileWidth) + 3
+	var rows [4]string
+	for r := 0; r < 4; r++ {
+		repeated := strings.Repeat(ekgTile[r], repeats)
+		end := m.ekgOffset + width
+		if end > len(repeated) {
+			end = len(repeated)
+		}
+		rows[r] = repeated[m.ekgOffset:end]
+	}
+	return rows
 }
 
 func truncateRune(s string, n int) string {
