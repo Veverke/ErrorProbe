@@ -57,7 +57,7 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 			allRunning = false
 			break
 		}
-	}
+}
 	if allRunning {
 		onStatus("stack already running — use 'errorprobe down' to stop it")
 		return nil
@@ -148,13 +148,31 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 	}
 
 	// 10. Start Vector.
+	// SECURITY NOTE: The host Docker socket (/var/run/docker.sock) is mounted into
+	// the Vector container to enable the docker_logs source, which requires access
+	// to the Docker daemon API to read container logs.
+	//
+	// Security implications:
+	//   - Any process inside the Vector container with access to the socket can
+	//     issue arbitrary Docker API calls, equivalent to root on the host.
+	//   - This mount should be considered a privileged operation and used only in
+	//     trusted environments.
+	//
+	// Recommended mitigations (not yet implemented):
+	//   - Use a Docker socket proxy (e.g., Tecnativa/docker-socket-proxy) that
+	//     restricts API access to only the endpoints Vector requires (e.g., GET
+	//     /containers and GET /events).
+	//   - Run the Vector container as a non-root user where possible.
+	//   - Ensure the Vector image is pinned to a verified digest.
 	onStatus("starting vector…")
 	vectorConfigPath := filepath.Join(configsDir, "vector.toml")
 	if err := cli.StartContainer(ctx, docker.ContainerSpec{
 		Name:  ContainerVector,
 		Image: cfg.Stack.Vector.Image,
+		Cmd:   []string{"--config", "/etc/vector/vector.toml"},
 		Mounts: []docker.Mount{
 			{Source: vectorConfigPath, Target: "/etc/vector/vector.toml", ReadOnly: true},
+			{Source: "/var/run/docker.sock", Target: "/var/run/docker.sock", ReadOnly: false},
 		},
 		Networks: []string{NetworkName},
 		Labels:   managedLabel(),

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 )
@@ -137,4 +138,22 @@ func (c *Client) SendSignal(ctx context.Context, containerName string, signal st
 		return fmt.Errorf("sending signal %s to %s: %w", signal, containerName, err)
 	}
 	return nil
+}
+
+// ContainerList returns containers matching options.
+func (c *Client) ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+	list, err := c.cli.ContainerList(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing containers: %w", err)
+	}
+	return list, nil
+}
+
+// ContainerInspect returns detailed info for the given container ID or name.
+func (c *Client) ContainerInspect(ctx context.Context, id string) (container.InspectResponse, error) {
+	info, err := c.cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return container.InspectResponse{}, fmt.Errorf("inspecting container %s: %w", id, err)
+	}
+	return info, nil
 }

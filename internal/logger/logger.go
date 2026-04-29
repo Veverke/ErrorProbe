@@ -66,9 +66,9 @@ func Close() {
 	fileLogger = nil
 }
 
-// Info logs a message at INFO level to file and stdout.
+// Info logs a message at INFO level to file and stderr.
 func Info(msg string, fields ...any) {
-	write(os.Stdout, "INFO", msg, fields...)
+	write(os.Stderr, "INFO", msg, fields...)
 }
 
 // Error logs a message at ERROR level to file and stdout.

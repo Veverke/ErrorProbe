@@ -173,7 +173,49 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 - Mark all Phase 4 tasks as `[x]`
 - Add completion date next to phase heading
 
-#### T4.15 — Update roadmap.html
+#### T4.15 — Provision default Grafana dashboards
+**Goal:** User runs `errorprobe up` and opens `http://localhost:3000` to find a fully functional, beautiful observability UI — no Grafana knowledge or manual setup required.
+
+**Design principles:**
+- Dashboards are static JSON assets embedded in the binary (like the templates). They use Grafana **variables** (e.g. `$container`) that auto-populate from Loki label values, so no regeneration is needed when containers change.
+- Set **Dashboard 1 as the Grafana home dashboard** so it is the first thing the user sees.
+- Use the provisioned Loki datasource UID (`errorprobe-loki`) so no manual datasource wiring is needed.
+- Color language consistent throughout: `error`→red, `warn`→yellow/amber, `info`→green. Dark theme.
+
+**Dashboard 1 — ErrorProbe Overview** (home dashboard):
+- **Row: System Health** — three stat panels:
+  - *Watched Containers* — count of unique `container` label values seen in Loki (last 24h)
+  - *Containers with Errors* — count of containers that have at least one `level=error` log in the last 1h; colored red if > 0, green if 0
+  - *Total Errors (1h)* — sum of error log lines across all containers in last 1h; colored red if > 0
+- **Log Volume Over Time** — stacked bar chart of log lines per minute, coloured by `level` (red/yellow/green), with `$container` variable filter (default = All)
+- **Recent Errors** — table panel: timestamp, container, message; last 50 `level=error` lines across all containers; sorted newest first
+- **Container variable** (`$container`) — multi-select dropdown, auto-populated via `label_values(container)` from Loki; default = All
+
+**Dashboard 2 — Container Detail**:
+- Linked from the *Watched Containers* stat panel and the *Recent Errors* table (click container → open this dashboard filtered to that container)
+- **Row: Container Stats** — stat panels: errors last 1h, warnings last 1h, info last 1h; error count colored red if > 0
+- **Log Volume Over Time** — stacked bar, scoped to `{container="$container"}`, coloured by level
+- **Log Stream** — Grafana Logs panel: `{container="$container"}` with `level` highlighted; supports live-tail toggle; log line deduplication off
+
+**Implementation:**
+- `internal/configgen.GenerateGrafanaDashboards(cfg *config.Config, outputDir string) error`
+  - Writes `dashboards/errorprobe-overview.json` and `dashboards/errorprobe-detail.json` from embedded templates
+  - Writes `dashboards/provider.yaml` (Grafana dashboard provisioning config pointing at the folder)
+  - Sets `overwrite: true` so re-running `up` refreshes dashboards
+- `configgen.GenerateGrafanaHomePreference(cfg *config.Config, outputDir string) error`
+  - Writes `grafana.ini` override that sets `[dashboards] default_home_dashboard_path` to the overview dashboard
+  - Mounted into the Grafana container at `/etc/grafana/grafana.ini`
+- Called once from `stack.Up` — dashboards are static, no reconciler involvement needed
+- Dashboard JSONs are embedded in the binary via `assets/` embed (alongside existing templates)
+- `stack.Up` also mounts the `dashboards/` subdirectory into the Grafana container
+
+**Tests:**
+- `TestGenerateGrafanaDashboards_FilesCreated` — both JSON files and provider.yaml exist after call
+- `TestGenerateGrafanaDashboards_ValidJSON` — each JSON parses without error
+- `TestGenerateGrafanaDashboards_DatasourceUID` — JSON contains `errorprobe-loki` UID
+- `TestGenerateGrafanaDashboards_Overwrite` — calling twice does not error; files updated
+
+#### T4.16 — Update roadmap.html
 - Open `docs/roadmap.html` in a browser and verify Phase 4 is reflected correctly
 - In the `PHASES` array, set Phase 4's `status` to `"completed"` and `actualEnd` to the actual finish date
 - Compare actual duration against the planned estimate; if velocity differed, adjust `start` / `end` for all subsequent phases accordingly
@@ -191,6 +233,8 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 | `cmd/logs.go` | Wired — real-time log tail from Loki with errors-only filter |
 | `cmd/reload.go` | Wired — soft/hard change classification and application |
 | `internal/links.BuildExploreURL` | Grafana deep-link generator |
+| `internal/configgen.GenerateGrafanaDashboards` | Two pre-built dashboards: ErrorProbe Overview (home) and Container Detail; auto-provisioned, zero manual setup |
+| `internal/configgen.GenerateGrafanaHomePreference` | Sets Overview as Grafana home dashboard via `grafana.ini` override |
 | `internal/stack.IsStackRunning` | Stack running guard used by check and logs |
 | `internal/stack.ClassifyChanges` | Reload change classifier |
 | `up` command polish | Clean startup summary with container count and URLs |

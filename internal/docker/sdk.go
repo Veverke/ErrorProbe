@@ -21,6 +21,7 @@ type sdkAPI interface {
 	ImageInspectWithRaw(ctx context.Context, imageID string) (image.InspectResponse, []byte, error)
 	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
 
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 	ContainerKill(ctx context.Context, containerID, signal string) error
 	ContainerCreate(ctx context.Context, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig, platform *ocispec.Platform, name string) (container.CreateResponse, error)

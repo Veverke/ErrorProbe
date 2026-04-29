@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -102,6 +104,12 @@ func (m *mockDockerAPI) RemoveVolume(_ context.Context, _ string) error {
 	}
 	return m.volErr
 }
+func (m *mockDockerAPI) ContainerList(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
+	return nil, nil
+}
+func (m *mockDockerAPI) ContainerInspect(_ context.Context, _ string) (container.InspectResponse, error) {
+	return container.InspectResponse{}, nil
+}
 
 var _ docker.DockerAPI = (*mockDockerAPI)(nil)
 
@@ -169,7 +177,7 @@ func TestPollUntilReady_BothReady(t *testing.T) {
 }
 
 func TestPollUntilReady_Timeout(t *testing.T) {
-cfg := &config.Config{
+	cfg := &config.Config{
 		Stack: config.Stack{
 			Loki:    config.LokiConfig{Port: 19501},
 			Grafana: config.GrafanaConfig{Port: 19502},
@@ -445,7 +453,7 @@ func TestUpCore_CreateNetworkFails(t *testing.T) {
 	cfg := buildTestConfig(t, 19681, 19682, 19683)
 	stack.SetPollFn(noopPoll)
 	t.Cleanup(func() { stack.SetPollFn(stack.PollUntilReady) })
-cli := newMockDocker()
+	cli := newMockDocker()
 	cli.netErr = errors.New("network create error")
 
 	err := stack.UpCore(context.Background(), cfg, cli, func(string) {})
