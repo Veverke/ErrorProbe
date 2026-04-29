@@ -25,7 +25,7 @@ type tickMsg time.Time
 // ekgMsg drives the EKG scroll animation.
 type ekgMsg struct{}
 
-const ekgInterval = 80 * time.Millisecond
+const ekgInterval = 120 * time.Millisecond
 
 // ekgTile is one full cardiac-cycle tile (40 chars wide, 4 rows).
 // Row 0 = top (R-spike tip); Row 3 = bottom (S-wave dip below baseline).
