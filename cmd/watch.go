@@ -5,6 +5,8 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	lipgloss "github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
 	"github.com/errorprobe/errorprobe/internal/config"
@@ -42,6 +44,10 @@ for all watched containers in real time, updating as new log events arrive.`,
 			return fmt.Errorf("loading watch set: %w", err)
 		}
 
+		// Force TrueColor so ANSI styles render in VS Code's integrated terminal,
+		// which fails the isatty check and causes lipgloss to auto-detect NoTTY.
+		lipgloss.SetColorProfile(termenv.TrueColor)
+
 		model := tui.NewModel(snapshotPath, watchSetPath, snap, ws)
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
@@ -50,3 +56,5 @@ for all watched containers in real time, updating as new log events arrive.`,
 		return nil
 	},
 }
+
+

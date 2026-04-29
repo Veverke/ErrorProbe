@@ -21,6 +21,13 @@ type refreshMsg struct {
 // tickMsg is sent on each poll tick.
 type tickMsg time.Time
 
+// spinMsg drives the header dot animation.
+type spinMsg struct{}
+
+const spinInterval = 500 * time.Millisecond
+
+var dotFrames = [3]string{" .", " . .", " . . ."}
+
 // Model is the Bubbletea model for the watch TUI.
 type Model struct {
 	snap         health.HealthSnapshot
@@ -32,6 +39,7 @@ type Model struct {
 	width        int
 	height       int
 	quitting     bool
+	spinFrame    int
 }
 
 var (
@@ -55,9 +63,10 @@ func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws 
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
+	return tea.Batch(
+		tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }),
+		tea.Tick(spinInterval, func(time.Time) tea.Msg { return spinMsg{} }),
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -106,6 +115,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return tickMsg(t)
 		})
 
+	case spinMsg:
+		m.spinFrame = (m.spinFrame + 1) % len(dotFrames)
+		return m, tea.Tick(spinInterval, func(time.Time) tea.Msg { return spinMsg{} })
+
 	case refreshMsg:
 		m.snap = msg.snap
 		m.ws = msg.ws
@@ -128,7 +141,8 @@ func (m Model) View() string {
 	}
 
 	header := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n)) +
-		"           " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [q] quit")
+		dimStyle.Render(dotFrames[m.spinFrame]) +
+		"      " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [q] quit")
 
 	sep := borderStyle.Render("─")
 	colFmt := "%-22s  %-20s  %-12s  %-22s"
