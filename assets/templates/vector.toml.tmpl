@@ -23,12 +23,12 @@ source = '''
   # Infer severity level
   msg = raw
   {{- range .ErrorPatterns}}
-  if match(msg, r'{{.}}') {
+  if match(msg, r'{{. | escapeVRLPattern}}') {
     .level = "error"
   } else
   {{- end}}
   {{- range .WarnPatterns}}
-  if match(msg, r'{{.}}') {
+  if match(msg, r'{{. | escapeVRLPattern}}') {
     .level = "warn"
   } else
   {{- end}}
@@ -49,10 +49,16 @@ level = "{{ "{{" }} .level {{ "}}" }}"
 [sinks.loki.encoding]
 codec = "json"
 
+# NOTE: The errorprobe_ingest sink requires the ingest endpoint to be reachable
+# from within the Vector container. If IngestBind is 127.0.0.1, Vector will not
+# be able to reach the host process. Use a host alias, a containerized ingest
+# service, or replace IngestBind with the appropriate host address (e.g.,
+# host.docker.internal) before enabling this sink.
+{{- if .IngestEnabled}}
 [sinks.errorprobe_ingest]
 type = "http"
 inputs = ["normalize"]
-uri = "http://{{.IngestBind}}:{{.IngestPort}}/ingest"
+uri = "http://{{.IngestHost}}:{{.IngestPort}}/ingest"
 method = "post"
 
 [sinks.errorprobe_ingest.encoding]
@@ -61,3 +67,4 @@ codec = "json"
 [sinks.errorprobe_ingest.batch]
 max_events = 100
 timeout_secs = 1
+{{- end}}

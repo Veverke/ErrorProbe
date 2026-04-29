@@ -24,7 +24,7 @@ const ManagedLabelValue = "errorprobe"
 const k8sContainerLabel = "io.kubernetes.docker.type"
 
 // ListRunning returns all running user containers, excluding any containers
-// managed by ErrorProbe (those with the label com.errorprobe.managed=true).
+// managed by ErrorProbe (those with the label managed-by=errorprobe).
 // RestartCount and InfraStatus are populated via a separate inspect call.
 func ListRunning(ctx context.Context, dockerClient docker.DockerAPI) ([]ContainerMeta, error) {
 	args := filters.NewArgs(filters.Arg("status", "running"))

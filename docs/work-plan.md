@@ -72,16 +72,16 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 2 — Container Discovery *(completed 2026-04-29)*
+## Phase 2 — Container Discovery *(in progress)*
 
 **Goal:** ErrorProbe discovers all running user containers, applies watch policy, generates a Vector config scoped to the approved set, and reloads Vector when the set changes.
 
 ### Tasks
 
-- [x] Implement `discovery` package: list all running containers via Docker API, extract metadata (name, image, labels, start time, restart count, health probe status)
+- [x] Implement `discovery` package: list all running containers via Docker API, extract metadata (name, image, labels, start time, restart count)
 - [x] Apply watch policy from `errorprobe.yaml`: filter by `containers.exclude` glob patterns; resolve final approved set
 - [x] Persist approved set to `~/.errorprobe/state/containers.json`
-- [x] Implement Vector config generation (full): produce `vector.toml` with `docker_logs` source scoped to approved container set (by name list); include VRL transform for severity inference using patterns from `errorprobe.yaml`
+- [x] Implement Vector config generation (full): produce `vector.toml` with `docker_logs` source scoped to approved container set (by name list); include VRL transform for severity inference using patterns from `errorprobe.yaml`; include ErrorProbe HTTP sink
 - [x] VRL transform: normalise all log lines to schema `{ timestamp, container, level, message, raw }`; apply severity inference against `detection.severity_patterns`; emit to both Loki sink and ErrorProbe HTTP sink
 - [x] Reconciliation loop: run discovery every 5 seconds; diff against previous approved set; on change, regenerate Vector config and send `SIGHUP` to Vector container via Docker API
 - [x] Implement `errorprobe list` command: tabular output — container name, image, status, infra health (running / restarting / exited), watching (yes/no)
@@ -98,7 +98,6 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 ### Tasks
 
 - [ ] Implement `ingest` package: transport interface `Ingest(batch []LogEvent)`; HTTP JSON implementation binding on `127.0.0.1:{ingest.port}` (default 9099)
-- [ ] Add HTTP sink to Vector config generation: `POST http://127.0.0.1:9099/ingest` with JSON batching; runs alongside existing Loki sink
 - [ ] Implement `health` package: in-memory per-container state machine (`OK` → `HAS_ERRORS`); Tier 1 trigger: any inbound log event with `level = error` or `level = warn` flips container to `HAS_ERRORS`
 - [ ] Persist health snapshot to `~/.errorprobe/state/health.json` on every state change
 - [ ] Track per-container: current state, total error count, timestamp of first error, timestamp of most recent error, most recent error message

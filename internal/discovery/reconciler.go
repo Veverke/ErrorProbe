@@ -41,8 +41,13 @@ func NewReconciler(cfg *config.Config, dockerClient docker.DockerAPI, gen Vector
 }
 
 // Run runs the reconciliation loop until ctx is cancelled.
+// An initial tick is performed immediately before entering the interval loop.
 // An error in a single tick is logged and retried on the next tick.
 func (r *Reconciler) Run(ctx context.Context) error {
+	if err := r.tick(ctx); err != nil {
+		logger.Error("reconciler tick failed", "err", err)
+	}
+
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 
@@ -92,12 +97,14 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		return fmt.Errorf("generating vector config: %w", err)
 	}
 
-	// 5. Send SIGHUP to Vector container.
+	// 5. Send SIGHUP to Vector container. If this fails, return an error so the
+	// tick is retried and the watch set is not persisted, preventing the diff
+	// from being suppressed on subsequent ticks.
 	if err := r.docker.SendSignal(ctx, "errorprobe-vector", "SIGHUP"); err != nil {
-		logger.Error("sending SIGHUP to vector", "err", err)
+		return fmt.Errorf("sending SIGHUP to vector: %w", err)
 	}
 
-	// 6. Persist new watch set.
+	// 6. Persist new watch set only after a successful reload signal.
 	if err := SaveWatchSet(r.statePath, current); err != nil {
 		return fmt.Errorf("saving watch set: %w", err)
 	}

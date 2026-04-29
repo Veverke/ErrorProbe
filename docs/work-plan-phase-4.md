@@ -235,7 +235,6 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 | `internal/links.BuildExploreURL` | Grafana deep-link generator |
 | `internal/configgen.GenerateGrafanaDashboards` | Two pre-built dashboards: ErrorProbe Overview (home) and Container Detail; auto-provisioned, zero manual setup |
 | `internal/configgen.GenerateGrafanaHomePreference` | Sets Overview as Grafana home dashboard via `grafana.ini` override |
-| `internal/configgen.GenerateGrafanaDashboards` | Pre-provisioned dashboards (log overview, error rate by container) |
 | `internal/stack.IsStackRunning` | Stack running guard used by check and logs |
 | `internal/stack.ClassifyChanges` | Reload change classifier |
 | `up` command polish | Clean startup summary with container count and URLs |

@@ -28,8 +28,7 @@ errorprobe.yaml, showing their names, images, infra status, and watch status.`,
 
 		cli, err := docker.NewClient()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "errorprobe stack is not running or Docker is unreachable:", err)
-			os.Exit(1)
+			return fmt.Errorf("errorprobe stack is not running or Docker is unreachable: %w", err)
 		}
 		defer cli.Close()
 
@@ -42,7 +41,11 @@ errorprobe.yaml, showing their names, images, infra status, and watch status.`,
 
 		// Load persisted watch set to determine watch status.
 		stateFile := cfg.StateDir() + "containers.json"
-		ws, _ := discovery.LoadWatchSet(stateFile)
+		ws, err := discovery.LoadWatchSet(stateFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not load watch state from %s: %v\n", stateFile, err)
+			ws = discovery.WatchSet{}
+		}
 		watched := make(map[string]bool, len(ws.Containers))
 		for _, c := range ws.Containers {
 			watched[c.ID] = true
