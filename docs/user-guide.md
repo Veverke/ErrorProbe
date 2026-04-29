@@ -210,6 +210,12 @@ detection:
     warn: [WARN, WARNING, warn]
 ```
 
+### TUI (Terminal User Interface)
+
+A TUI is an interactive, text-based UI that runs inside the terminal — like `htop`, `vim`, or `lazygit`. Rather than scrolling static output, it renders a live-updating screen with panels, colours, and keyboard navigation within a normal terminal window.
+
+ErrorProbe's `watch` command is the TUI entry point: it displays a live dashboard of container health states and recent errors without requiring Grafana.
+
 ### Generated configs
 
 All generated files live in `~/.errorprobe/configs/`. They are overwritten on every `up` or reconciler reload. Do not edit them by hand — changes will be lost.

@@ -553,13 +553,20 @@ body {
  *
  *  ── Burn-rate note (updated 2026-04-28) ──────────────────────────
  *  Phase 0 planned: 7 days (5 pts).  Actual: 1 day (5 pts).
- *  Velocity: 5 pts/day vs planned 0.71 pts/day.
- *  NOTE: Phase 0 was XS (pure scaffolding — no external integrations).
- *  Phases 1–8 involve Docker API, networking, TUI, and gRPC; their
- *  planned durations are kept unchanged.  Only start/end dates are
- *  shifted 6 days earlier to reflect the Phase 0 early finish.
- *  Revised projected completion: 2026-09-10 (was 2026-09-16).
- *  Remaining story points: 170 pts across 134 calendar days.
+ *  Phase 1 planned: 1 day (13 pts).  Actual: 1 day.
+ *  Phase 2 planned: 14 days (13 pts). Actual: 2 days.
+ *  Phase 3 planned: 16 days (21 pts). Actual: 1 day (2026-04-29).
+ *  Velocity: 52 pts across 2 calendar days = 26 pts/day (AI-assisted).
+ *  NOTE: Phases 0–3 were all compressed dramatically vs plan.
+ *  Phases 4–8 planned durations are kept unchanged.
+ *  Only start/end dates are shifted to reflect Phase 3 early finish (2026-04-29).
+ *  Phase 4: 2026-04-29 → 2026-05-13 (14 days, as planned)
+ *  Phase 5: 2026-05-13 → 2026-05-30 (17 days, as planned)
+ *  Phase 6: 2026-05-30 → 2026-06-20 (21 days, as planned)
+ *  Phase 7: 2026-06-20 → 2026-07-07 (17 days, as planned)
+ *  Phase 8: 2026-07-07 → 2026-07-28 (21 days, as planned)
+ *  Revised projected completion: 2026-07-28 (was 2026-09-10).
+ *  Remaining story points: 123 pts across 90 calendar days.
  * ==================================================================== */
 
 const TODAY = new Date('2026-04-29');   // ← keep this current
@@ -625,9 +632,9 @@ const PHASES = [
     points: 21,
     tasks: 17,                // T3.1 – T3.17
     category: "v1-core",
-    status: "planned",
-    actualEnd: null,
-    progress: 0,
+    status: "completed",
+    actualEnd: "2026-04-29",
+    progress: 100,
   },
   {
     id: 4,
@@ -636,8 +643,8 @@ const PHASES = [
     goal: "errorprobe check (CI exit codes), logs stream from Loki, reload (soft/hard change " +
           "classifier), Grafana deep-links, pre-provisioned Grafana dashboards (container log " +
           "overview, error rate by container, level breakdown), polished startup output.",
-    start:    "2026-05-28",
-    end:      "2026-06-11",
+    start:    "2026-04-29",
+    end:      "2026-05-13",
     complexity: "M",
     points: 13,
     tasks: 15,                // T4.1 – T4.15
@@ -652,8 +659,8 @@ const PHASES = [
     title: "K8s Discovery",
     goal: "Extend discovery to local K8s clusters (Docker Desktop, k3s, minikube). " +
           "Runtime auto-detect, pod/namespace labels, K8s exclusion patterns, K8s Vector source.",
-    start:    "2026-06-11",
-    end:      "2026-06-28",
+    start:    "2026-05-13",
+    end:      "2026-05-30",
     complexity: "L",
     points: 21,
     tasks: 16,                // T5.1 – T5.16
@@ -668,8 +675,8 @@ const PHASES = [
     title: "Tier 2 Detection",
     goal: "FAILING state, error fingerprinting, Loki query engine, Tier 2 evaluator " +
           "(repeated-error threshold), history log with retention, check.fail_on: FAILING.",
-    start:    "2026-06-28",
-    end:      "2026-07-19",
+    start:    "2026-05-30",
+    end:      "2026-06-20",
     complexity: "XL",
     points: 34,
     tasks: 16,                // T6.1 – T6.16
@@ -684,8 +691,8 @@ const PHASES = [
     title: "gRPC / OTLP Transport",
     goal: "gRPC OTLP ingest as configurable alternative to HTTP JSON. " +
           "Transport factory, Vector gRPC sink, reload classifies transport change as hard.",
-    start:    "2026-07-19",
-    end:      "2026-08-05",
+    start:    "2026-06-20",
+    end:      "2026-07-07",
     complexity: "L",
     points: 21,
     tasks: 13,                // T7.1 – T7.13
@@ -700,8 +707,8 @@ const PHASES = [
     title: "Remote Docker & Kubernetes",
     goal: "Remote host discovery (Docker TCP/SSH, kubeconfig context), bearer token auth, " +
           "remote Vector bundle export, remote host grouping in TUI and list.",
-    start:    "2026-08-05",
-    end:      "2026-08-26",
+    start:    "2026-07-07",
+    end:      "2026-07-28",
     complexity: "XL",
     points: 34,
     tasks: 14,                // T8.1 – T8.14
@@ -714,17 +721,17 @@ const PHASES = [
 
 const MILESTONES = [
   {
-    date: "2026-06-10",
+    date: "2026-05-13",
     label: "V1 Core Complete",
     description: "Phases 0–4 complete: full local Docker workflow, error detection, CI integration",
   },
   {
-    date: "2026-06-27",
+    date: "2026-05-30",
     label: "V1 Complete",
     description: "Phase 5 complete: K8s discovery added — original pain-case fully solved",
   },
   {
-    date: "2026-08-25",
+    date: "2026-07-27",
     label: "V2 Complete",
     description: "Phases 6–8 complete: Tier 2 detection, gRPC transport, remote host support",
   },
@@ -735,7 +742,7 @@ const MILESTONES = [
  * ==================================================================== */
 
 const CHART_START = new Date('2026-04-28');
-const CHART_END   = new Date('2026-09-23');  // 1 week padding after last phase
+const CHART_END   = new Date('2026-08-04');  // 1 week padding after last phase
 const TOTAL_MS    = CHART_END - CHART_START;
 
 function pct(dateStr) {

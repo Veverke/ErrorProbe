@@ -91,20 +91,20 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 3 — Semantic Health Engine (Tier 1)
+## Phase 3 — Semantic Health Engine (Tier 1) *(completed 2026-04-29)*
 
 **Goal:** Real-time error detection. `errorprobe status` shows per-container functional health. `errorprobe watch` provides a live TUI.
 
 ### Tasks
 
-- [ ] Implement `ingest` package: transport interface `Ingest(batch []LogEvent)`; HTTP JSON implementation binding on `127.0.0.1:{ingest.port}` (default 9099)
-- [ ] Implement `health` package: in-memory per-container state machine (`OK` → `HAS_ERRORS`); Tier 1 trigger: any inbound log event with `level = error` or `level = warn` flips container to `HAS_ERRORS`
-- [ ] Persist health snapshot to `~/.errorprobe/state/health.json` on every state change
-- [ ] Track per-container: current state, total error count, timestamp of first error, timestamp of most recent error, most recent error message
-- [ ] Implement `errorprobe status` command: one line per watched container — name, functional state (`✓ OK` / `⚠ HAS ERRORS [N]`), infra state (from discovery metadata), last error message excerpt
-- [ ] Implement `errorprobe status --json` for machine-readable output
-- [ ] Implement `errorprobe watch` command: Bubbletea TUI, refreshes on state change events (not polling); columns: container, functional state, infra state, error count, last error time; keyboard: `[e]` expand errors for selected container, `[q]` quit
-- [ ] State reset: `errorprobe status --reset <container>` clears error state for a container (useful after acknowledging a known issue)
+- [x] Implement `ingest` package: transport interface `Ingest(batch []LogEvent)`; HTTP JSON implementation binding on `127.0.0.1:{ingest.port}` (default 9099)
+- [x] Implement `health` package: in-memory per-container state machine (`OK` → `HAS_ERRORS`); Tier 1 trigger: any inbound log event with `level = error` or `level = warn` flips container to `HAS_ERRORS`
+- [x] Persist health snapshot to `~/.errorprobe/state/health.json` on every state change
+- [x] Track per-container: current state, total error count, timestamp of first error, timestamp of most recent error, most recent error message
+- [x] Implement `errorprobe status` command: one line per watched container — name, functional state (`✓ OK` / `⚠ HAS ERRORS [N]`), infra state (from discovery metadata), last error message excerpt
+- [x] Implement `errorprobe status --json` for machine-readable output
+- [x] Implement `errorprobe watch` command: Bubbletea TUI, refreshes on state change events (not polling); columns: container, functional state, infra state, error count, last error time; keyboard: `[e]` expand errors for selected container, `[q]` quit
+- [x] State reset: `errorprobe status --reset <container>` clears error state for a container (useful after acknowledging a known issue)
 
 **Exit criterion:** Developer runs `errorprobe watch`. A watched container emits an error log line. Within 1–2 seconds, the TUI flips that container from `✓ OK` to `⚠ HAS ERRORS` and shows the error message. Both functional and infra state are visible in the same row.
 

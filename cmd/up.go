@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/errorprobe/errorprobe/internal/configgen"
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/docker"
+	"github.com/errorprobe/errorprobe/internal/health"
+	"github.com/errorprobe/errorprobe/internal/ingest"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
@@ -48,6 +51,32 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+
+		// Start health engine (loads persisted state if present).
+		snapshotPath := cfg.StateDir() + "health.json"
+		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
+			// onChange: snapshot persisted; nothing extra needed in foreground mode.
+		})
+
+		// Start ingest HTTP transport wired to the engine.
+		bind := cfg.Stack.Ingest.Bind
+		if bind == "" {
+			bind = "127.0.0.1"
+		}
+		port := cfg.Stack.Ingest.Port
+		if port == 0 {
+			port = 9099
+		}
+		addr := bind + ":" + strconv.Itoa(port)
+		transport := ingest.NewHTTPTransport(addr)
+		transport.OnBatch(engine.ProcessBatch)
+
+		go func() {
+			if err := transport.Start(ctx); err != nil {
+				onStatus(fmt.Sprintf("ingest transport stopped: %v", err))
+			}
+		}()
+		onStatus(fmt.Sprintf("ingest listening on %s", addr))
 
 		gen := configgen.DefaultGenerator{}
 		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {

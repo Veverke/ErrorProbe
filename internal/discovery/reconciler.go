@@ -113,12 +113,26 @@ func (r *Reconciler) tick(ctx context.Context) error {
 	// 6. Send SIGHUP to Vector container. Log on failure but do not return an
 	// error — the config has already been regenerated and persisted; Vector will
 	// pick it up on its next restart.
-	if err := r.docker.SendSignal(ctx, "errorprobe-vector", "SIGHUP"); err != nil {
-		logger.Error("sending SIGHUP to vector", "err", err)
+	vectorRunning, err := r.docker.ContainerRunning(ctx, "errorprobe-vector")
+	if err != nil {
+		logger.Error("checking vector container state", "err", err)
+	} else if !vectorRunning {
+		logger.Info("vector container not running — config updated, reload deferred until restart")
+	} else {
+		if err := r.docker.SendSignal(ctx, "errorprobe-vector", "SIGHUP"); err != nil {
+			logger.Error("sending SIGHUP to vector", "err", err)
+		} else {
+			// 7. Notify caller only when reload actually succeeded.
+			logger.Info("vector config reloaded", "watching", len(approved))
+			if r.onReload != nil {
+				r.onReload()
+			}
+		}
+		return nil
 	}
 
-	// 7. Notify caller.
-	logger.Info("vector config reloaded", "watching", len(approved))
+	// Config updated but Vector wasn't reloaded — still notify so the user
+	// knows the watch set changed.
 	if r.onReload != nil {
 		r.onReload()
 	}
