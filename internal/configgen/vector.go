@@ -24,6 +24,7 @@ func GenerateVector(cfg *config.Config, outputDir string, containers []string) e
 
 	data := struct {
 		Containers    []string
+		LokiHost      string
 		LokiPort      int
 		IngestBind    string
 		IngestPort    int
@@ -31,6 +32,7 @@ func GenerateVector(cfg *config.Config, outputDir string, containers []string) e
 		WarnPatterns  []string
 	}{
 		Containers:    containers,
+		LokiHost:      "errorprobe-loki",
 		LokiPort:      cfg.Stack.Loki.Port,
 		IngestBind:    cfg.Stack.Ingest.Bind,
 		IngestPort:    cfg.Stack.Ingest.Port,

@@ -13,7 +13,15 @@ import (
 )
 
 // ManagedLabel is the Docker label set on all ErrorProbe-managed containers.
-const ManagedLabel = "com.errorprobe.managed"
+// Must match the value set in internal/stack/up.go managedLabel().
+const ManagedLabel = "managed-by"
+
+// ManagedLabelValue is the value that identifies an ErrorProbe-managed container.
+const ManagedLabelValue = "errorprobe"
+
+// k8sContainerLabel is set by Docker Desktop on containers that back Kubernetes pods.
+// We exclude these because they are managed by K8s, not the user's Docker Compose / CLI.
+const k8sContainerLabel = "io.kubernetes.docker.type"
 
 // ListRunning returns all running user containers, excluding any containers
 // managed by ErrorProbe (those with the label com.errorprobe.managed=true).
@@ -28,7 +36,12 @@ func ListRunning(ctx context.Context, dockerClient docker.DockerAPI) ([]Containe
 	var out []ContainerMeta
 	for _, s := range summaries {
 		// Exclude ErrorProbe-managed containers.
-		if s.Labels[ManagedLabel] == "true" {
+		if s.Labels[ManagedLabel] == ManagedLabelValue {
+			continue
+		}
+		// Exclude Kubernetes infrastructure containers (Docker Desktop exposes them
+		// as regular Docker containers via the Docker API).
+		if _, ok := s.Labels[k8sContainerLabel]; ok {
 			continue
 		}
 

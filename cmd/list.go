@@ -49,9 +49,17 @@ errorprobe.yaml, showing their names, images, infra status, and watch status.`,
 		}
 
 		if listJSONFlag {
+			type jsonContainer struct {
+				discovery.ContainerMeta
+				Watching bool `json:"Watching"`
+			}
+			out := make([]jsonContainer, len(approved))
+			for i, c := range approved {
+				out[i] = jsonContainer{ContainerMeta: c, Watching: watched[c.ID]}
+			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			return enc.Encode(approved)
+			return enc.Encode(out)
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

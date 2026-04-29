@@ -153,8 +153,10 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 	if err := cli.StartContainer(ctx, docker.ContainerSpec{
 		Name:  ContainerVector,
 		Image: cfg.Stack.Vector.Image,
+		Cmd:   []string{"--config", "/etc/vector/vector.toml"},
 		Mounts: []docker.Mount{
 			{Source: vectorConfigPath, Target: "/etc/vector/vector.toml", ReadOnly: true},
+			{Source: "/var/run/docker.sock", Target: "/var/run/docker.sock", ReadOnly: false},
 		},
 		Networks: []string{NetworkName},
 		Labels:   managedLabel(),

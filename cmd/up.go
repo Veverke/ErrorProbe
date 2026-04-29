@@ -54,6 +54,12 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 			onStatus("container set changed — Vector config reloaded")
 		})
 
+		// Delete the state file so the first reconciler tick always regenerates
+		// the Vector config. This is necessary because up.go writes an empty
+		// include_containers list on startup; without this the reconciler would
+		// skip regeneration if the container set hasn't changed since last run.
+		_ = os.Remove(cfg.StateDir() + "containers.json")
+
 		onStatus("watching for container changes… (press CTRL+C to stop)")
 		return reconciler.Run(ctx)
 	},
