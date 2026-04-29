@@ -7,6 +7,35 @@
 
 ---
 
+## Known Issues Carried from Phase 3
+
+### Port conflict check fires before idempotency check in `up`
+
+**Observed during Phase 3 manual testing (2026-04-29).**
+
+When `errorprobe up` is killed (Ctrl+C) and then rerun while the three managed containers
+(Loki, Grafana, Vector) are still running and healthy, the startup sequence fails with:
+
+```
+Error: starting stack: port conflict: the following ports are already in use: loki (port 3100), grafana (port 3000)
+```
+
+**Root cause:** `stack.Up` runs the port-availability check unconditionally before the
+idempotency check (`IsAlreadyRunning`). Because the running containers are already holding
+those ports, the check triggers a false-positive failure.
+
+**Expected behaviour:** If all three managed containers are already running and healthy,
+`errorprobe up` should detect this, print a status message, and continue to the reconciler
+without re-checking ports or re-pulling images (identical to the first run's "already
+running" path that was tested in Phase 1).
+
+**Fix target:** Address as part of **T4.6** (`errorprobe reload`) — or as a preparatory
+fix in the `stack.Up` function before T4.6 if it blocks normal development workflow.
+The idempotency check must run first; the port check must be skipped when all containers
+are already in running state.
+
+---
+
 ## Atomic Tasks
 
 Tasks are grouped by dependency tier. All tasks within a tier can be implemented independently and in parallel.
