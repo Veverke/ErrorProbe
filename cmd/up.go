@@ -115,4 +115,3 @@ func printReadyBanner(cfg *config.Config, watchCount int, ingestAddr string) {
 	}
 	fmt.Println(strings.Join(lines, "\n"))
 }
-

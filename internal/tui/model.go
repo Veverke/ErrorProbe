@@ -7,7 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-tea "github.com/charmbracelet/bubbletea"
+
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/errorprobe/errorprobe/internal/discovery"
@@ -57,12 +58,12 @@ type Model struct {
 }
 
 var (
-	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	selectedBg  = lipgloss.NewStyle().Background(lipgloss.Color("237"))
+	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	okStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	borderStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	selectedBg     = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 	statusErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
@@ -110,7 +111,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rows := m.sortedNames()
 			if m.cursor < len(rows) {
 				name := rows[m.cursor]
-m.snap.Reset(name)
+				m.snap.Reset(name)
 				if err := health.SaveSnapshot(m.snapshotPath, m.snap); err != nil {
 					m.statusMsg = fmt.Sprintf("error saving snapshot: %v", err)
 				} else {
