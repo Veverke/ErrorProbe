@@ -1,6 +1,9 @@
 package configgen
 
-import "github.com/errorprobe/errorprobe/internal/config"
+import (
+	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/discovery"
+)
 
 // DefaultGenerator is a VectorGenerator that calls the package-level GenerateVector.
 // It satisfies the discovery.VectorGenerator interface so callers can use the
@@ -8,6 +11,6 @@ import "github.com/errorprobe/errorprobe/internal/config"
 type DefaultGenerator struct{}
 
 // GenerateVector implements discovery.VectorGenerator.
-func (DefaultGenerator) GenerateVector(cfg *config.Config, outputDir string, containers []string) error {
-	return GenerateVector(cfg, outputDir, containers)
+func (DefaultGenerator) GenerateVector(cfg *config.Config, outputDir string, dockerContainers []string, k8sContainers []discovery.K8sContainerRef) error {
+	return GenerateVector(cfg, outputDir, dockerContainers, k8sContainers)
 }

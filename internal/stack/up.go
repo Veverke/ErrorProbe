@@ -93,7 +93,7 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 	if err := configgen.GenerateGrafanaDashboards(configsDir); err != nil {
 		return fmt.Errorf("generating grafana dashboards: %w", err)
 	}
-	if err := configgen.GenerateVector(cfg, configsDir, []string{}); err != nil {
+	if err := configgen.GenerateVector(cfg, configsDir, []string{}, nil); err != nil {
 		return fmt.Errorf("generating vector config: %w", err)
 	}
 

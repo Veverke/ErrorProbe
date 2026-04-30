@@ -14,6 +14,7 @@ type Config struct {
 	Stack            Stack      `mapstructure:"stack"`
 	Detection        Detection  `mapstructure:"detection"`
 	Containers       Containers `mapstructure:"containers"`
+	K8s              K8sConfig  `mapstructure:"k8s"`
 	Check            Check      `mapstructure:"check"`
 	HistoryRetention string     `mapstructure:"history_retention"`
 }
@@ -65,6 +66,13 @@ type SeverityPatterns struct {
 // Containers holds container watch policy.
 type Containers struct {
 	Exclude []string `mapstructure:"exclude"`
+}
+
+// K8sConfig holds Kubernetes discovery settings.
+type K8sConfig struct {
+	// ExcludeNamespaces lists namespaces to exclude from discovery.
+	// Defaults to ["kube-system", "kube-public", "kube-node-lease"] when empty.
+	ExcludeNamespaces []string `mapstructure:"exclude_namespaces"`
 }
 
 // Check holds CI check settings.

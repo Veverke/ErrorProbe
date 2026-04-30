@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/discovery"
 )
 
 // escapeVRLPattern escapes characters that would break a VRL regex literal
@@ -15,15 +16,10 @@ func escapeVRLPattern(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
-// VectorGenerator is the interface for generating vector.toml.
-// It allows callers (including the reconciler) to inject a fake in tests.
-type VectorGenerator interface {
-	GenerateVector(cfg *config.Config, outputDir string, containers []string) error
-}
-
 // GenerateVector writes vector.toml to outputDir using the embedded template.
-// containers is the list of approved container names to include in the source.
-func GenerateVector(cfg *config.Config, outputDir string, containers []string) error {
+// dockerContainers is the list of approved Docker container names.
+// k8sContainers is the list of K8s containers (pod name + namespace).
+func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []string, k8sContainers []discovery.K8sContainerRef) error {
 	funcMap := template.FuncMap{
 		"escapeVRLPattern": escapeVRLPattern,
 	}
@@ -33,23 +29,25 @@ func GenerateVector(cfg *config.Config, outputDir string, containers []string) e
 	}
 
 	data := struct {
-		Containers    []string
-		LokiHost      string
-		LokiPort      int
-		IngestEnabled bool
-		IngestHost    string
-		IngestPort    int
-		ErrorPatterns []string
-		WarnPatterns  []string
+		DockerContainers []string
+		K8sContainers    []discovery.K8sContainerRef
+		LokiHost         string
+		LokiPort         int
+		IngestEnabled    bool
+		IngestHost       string
+		IngestPort       int
+		ErrorPatterns    []string
+		WarnPatterns     []string
 	}{
-		Containers:    containers,
-		LokiHost:      "errorprobe-loki",
-		LokiPort:      cfg.Stack.Loki.Port,
-		IngestEnabled: cfg.Stack.Ingest.Port > 0,
-		IngestHost:    ingestHost(cfg.Stack.Ingest.Bind),
-		IngestPort:    cfg.Stack.Ingest.Port,
-		ErrorPatterns: cfg.Detection.SeverityPatterns.Error,
-		WarnPatterns:  cfg.Detection.SeverityPatterns.Warn,
+		DockerContainers: dockerContainers,
+		K8sContainers:    k8sContainers,
+		LokiHost:         "errorprobe-loki",
+		LokiPort:         cfg.Stack.Loki.Port,
+		IngestEnabled:    cfg.Stack.Ingest.Port > 0,
+		IngestHost:       ingestHost(cfg.Stack.Ingest.Bind),
+		IngestPort:       cfg.Stack.Ingest.Port,
+		ErrorPatterns:    cfg.Detection.SeverityPatterns.Error,
+		WarnPatterns:     cfg.Detection.SeverityPatterns.Warn,
 	}
 
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {

@@ -130,19 +130,21 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 5 — K8s Discovery (V1 Follow-on)
+## Phase 5 — K8s Discovery (V1 Follow-on) ✅ COMPLETE
 
 **Goal:** Extend discovery to local Kubernetes clusters (Docker Desktop, k3s, minikube). The log pipeline and health engine are unchanged — only the discovery mechanism is added.
 
+**Completed:** 2025-07-03
+
 ### Tasks
 
-- [ ] Implement K8s discovery in `discovery` package: detect available kubeconfig (`~/.kube/config`), list pods and containers across namespaces via K8s API (`client-go`)
-- [ ] Runtime auto-detect: if both Docker socket and kubeconfig are reachable, discover from both; merge into a single approved set with `runtime: docker` / `runtime: k8s` metadata field
-- [ ] K8s metadata enrichment: add `pod`, `namespace`, `node` fields to container metadata
-- [ ] Vector config generation: add K8s log source (Vector `kubernetes_logs` source) for approved K8s containers; apply same VRL transform pipeline
-- [ ] `errorprobe list` extended: show `runtime` column; display pod and namespace for K8s containers
-- [ ] `errorprobe watch` TUI extended: group by runtime if both are active; K8s containers show pod/namespace as context
-- [ ] Watch policy extended: `containers.exclude` patterns match on `pod/*` and `namespace/*` prefixes for K8s exclusions
+- [x] Implement K8s discovery in `discovery` package: detect available kubeconfig (`~/.kube/config`), list pods and containers across namespaces via K8s API (`client-go`)
+- [x] Runtime auto-detect: if both Docker socket and kubeconfig are reachable, discover from both; merge into a single approved set with `runtime: docker` / `runtime: k8s` metadata field
+- [x] K8s metadata enrichment: add `pod`, `namespace`, `node` fields to container metadata
+- [x] Vector config generation: add K8s log source (Vector `kubernetes_logs` source) for approved K8s containers; apply same VRL transform pipeline
+- [x] `errorprobe list` extended: show `runtime` column; display pod and namespace for K8s containers
+- [x] `errorprobe watch` TUI extended: group by runtime if both are active; K8s containers show pod/namespace as context
+- [x] Watch policy extended: `containers.exclude` patterns match on `pod/*` and `namespace/*` prefixes for K8s exclusions
 - [ ] Validate against the original pain case: deploy N pods in local K8s, one emitting errors while infrastructure-healthy; `errorprobe watch` surfaces it within 2 seconds
 
 **Exit criterion:** The original use case from `intent.md` is solved end-to-end: K8s pods running, all showing infrastructure-healthy, one emitting errors — `errorprobe watch` shows it as `⚠ HAS ERRORS` within 2 seconds of the first error log line.

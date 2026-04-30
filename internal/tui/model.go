@@ -177,9 +177,16 @@ func (m Model) View() string {
 	names := m.sortedNames()
 	n := len(names)
 
+	// Build lookup maps from watch set for infra state and K8s metadata.
 	infraState := make(map[string]string, len(m.ws.Containers))
+	containerRuntime := make(map[string]string, len(m.ws.Containers))
+	containerSubtitle := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
 		infraState[c.Name] = c.InfraStatus
+		containerRuntime[c.Name] = c.Runtime
+		if c.Runtime == "k8s" && (c.Pod != "" || c.Namespace != "") {
+			containerSubtitle[c.Name] = c.Pod + "  ns=" + c.Namespace
+		}
 	}
 
 	header := m.renderHeader(n)
@@ -228,7 +235,35 @@ func (m Model) View() string {
 	rows = append(rows, colHeader)
 	rows = append(rows, borderStyle.Render(repeat("─", 82)))
 
+	// Detect whether we have both runtimes for section headers.
+	hasDocker, hasK8s := false, false
+	for _, name := range names {
+		rt := containerRuntime[name]
+		if rt == "docker" {
+			hasDocker = true
+		} else if rt == "k8s" {
+			hasK8s = true
+		}
+	}
+	showSectionHeaders := hasDocker && hasK8s
+	lastRuntime := ""
+
 	for i, name := range names {
+		rt := containerRuntime[name]
+		if rt == "" {
+			rt = "docker"
+		}
+
+		// Emit runtime section header when both runtimes are present.
+		if showSectionHeaders && rt != lastRuntime {
+			label := "── docker ──────────────────────────────────────────────────────────────────────"
+			if rt == "k8s" {
+				label = "── kubernetes ──────────────────────────────────────────────────────────────────"
+			}
+			rows = append(rows, dimStyle.Render(label))
+			lastRuntime = rt
+		}
+
 		ch := m.snap.Containers[name]
 		infra := infraState[name]
 		if infra == "" {
@@ -262,6 +297,11 @@ func (m Model) View() string {
 			line = selectedBg.Render(line)
 		}
 		rows = append(rows, line)
+
+		// K8s subtitle: pod + namespace.
+		if sub := containerSubtitle[name]; sub != "" {
+			rows = append(rows, dimStyle.Render("  "+sub))
+		}
 
 		// Expanded view: show full last error message
 		if i == m.cursor && m.expanded && ch.State == health.StateHasErrors {
@@ -301,7 +341,7 @@ func (m Model) renderHeader(n int) []string {
 }
 
 // sortedNames returns a deterministically ordered list of all container names
-// from both the health snapshot and the watch set.
+// from both the health snapshot and the watch set, sorted by runtime then name.
 func (m Model) sortedNames() []string {
 	seen := make(map[string]struct{})
 	for n := range m.snap.Containers {
@@ -310,11 +350,23 @@ func (m Model) sortedNames() []string {
 	for _, c := range m.ws.Containers {
 		seen[c.Name] = struct{}{}
 	}
+	// Build runtime lookup.
+	rtByName := make(map[string]string, len(m.ws.Containers))
+	for _, c := range m.ws.Containers {
+		rtByName[c.Name] = c.Runtime
+	}
 	names := make([]string, 0, len(seen))
 	for n := range seen {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	sort.Slice(names, func(i, j int) bool {
+		ri := rtByName[names[i]]
+		rj := rtByName[names[j]]
+		if ri != rj {
+			return ri < rj
+		}
+		return names[i] < names[j]
+	})
 	return names
 }
 

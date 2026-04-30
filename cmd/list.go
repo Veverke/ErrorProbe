@@ -12,18 +12,23 @@ import (
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/docker"
+	"github.com/errorprobe/errorprobe/internal/k8s"
 )
 
 var (
 	listJSONFlag    bool
 	listDetailsFlag bool
+	listRuntimeFlag string
 )
 
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all containers currently watched by ErrorProbe",
-	Long: `List all Docker containers that match the current watch policy defined in
-errorprobe.yaml, showing their names, images, infra status, and watch status.`,
+	Long: `List all Docker and/or Kubernetes containers that match the current watch
+policy defined in errorprobe.yaml, showing runtime, names, images, infra status,
+and watch status.
+
+Use --runtime docker or --runtime k8s to filter by runtime.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {
@@ -36,12 +41,30 @@ errorprobe.yaml, showing their names, images, infra status, and watch status.`,
 		}
 		defer cli.Close()
 
-		containers, err := discovery.ListRunning(cmd.Context(), cli)
+		dockerContainers, err := discovery.ListRunning(cmd.Context(), cli)
 		if err != nil {
-			return fmt.Errorf("listing containers: %w", err)
+			return fmt.Errorf("listing docker containers: %w", err)
 		}
 
-		approved := discovery.ApplyPolicy(containers, cfg)
+		// Attempt K8s discovery; silently skip if unavailable.
+		var k8sContainers []discovery.ContainerMeta
+		if k8cCli, k8sErr := k8s.NewClient(""); k8sErr == nil {
+			k8sContainers, _ = discovery.ListRunningK8s(cmd.Context(), k8cCli, cfg)
+		}
+
+		merged := discovery.MergeContainers(dockerContainers, k8sContainers)
+		approved := discovery.ApplyPolicy(merged, cfg)
+
+		// Apply --runtime filter.
+		if listRuntimeFlag != "" {
+			filtered := approved[:0]
+			for _, c := range approved {
+				if c.Runtime == listRuntimeFlag {
+					filtered = append(filtered, c)
+				}
+			}
+			approved = filtered
+		}
 
 		// Load persisted watch set to determine watch status.
 		stateFile := cfg.StateDir() + "containers.json"
@@ -74,13 +97,14 @@ errorprobe.yaml, showing their names, images, infra status, and watch status.`,
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "CONTAINER\tIMAGE\tINFRA STATUS\tWATCHING")
+		fmt.Fprintln(tw, "RUNTIME\tCONTAINER\tPOD\tNAMESPACE\tIMAGE\tINFRA STATUS\tWATCHING")
 		for _, c := range approved {
 			watching := "no"
 			if watched[c.ID] {
 				watching = "yes"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.Name, c.Image, c.InfraStatus, watching)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				c.Runtime, c.Name, c.Pod, c.Namespace, c.Image, c.InfraStatus, watching)
 		}
 		return tw.Flush()
 	},
@@ -96,16 +120,21 @@ func printListDetails(containers []discovery.ContainerMeta, watched map[string]b
 		if !watched[c.ID] {
 			watchMark = "not watching"
 		}
-		fmt.Printf("%s  [%s]\n", c.Name, watchMark)
+		fmt.Printf("%s  [%s]  runtime=%s\n", c.Name, watchMark, c.Runtime)
 		fmt.Printf("%simage:   %s\n", indent, c.Image)
 		fmt.Printf("%sstatus:  %s\n", indent, c.InfraStatus)
-
-		if len(c.Mounts) == 0 {
-			fmt.Printf("%svolumes: (none)\n", indent)
+		if c.Runtime == "k8s" {
+			fmt.Printf("%spod:       %s\n", indent, c.Pod)
+			fmt.Printf("%snamespace: %s\n", indent, c.Namespace)
+			fmt.Printf("%snode:      %s\n", indent, c.Node)
 		} else {
-			fmt.Printf("%svolumes:\n", indent)
-			for _, m := range c.Mounts {
-				fmt.Printf("%s%s  %s\n", indent+indent, mountLabel(m), mountArrow(m))
+			if len(c.Mounts) == 0 {
+				fmt.Printf("%svolumes: (none)\n", indent)
+			} else {
+				fmt.Printf("%svolumes:\n", indent)
+				for _, m := range c.Mounts {
+					fmt.Printf("%s%s  %s\n", indent+indent, mountLabel(m), mountArrow(m))
+				}
 			}
 		}
 
@@ -149,4 +178,5 @@ func mountArrow(m discovery.MountInfo) string {
 func init() {
 	listCmd.Flags().BoolVar(&listJSONFlag, "json", false, "output as JSON array")
 	listCmd.Flags().BoolVar(&listDetailsFlag, "details", false, "show image and volume breakdown per container")
+	listCmd.Flags().StringVar(&listRuntimeFlag, "runtime", "", "filter by runtime: docker or k8s")
 }

@@ -20,8 +20,13 @@ type ContainerMeta struct {
 	StartedAt    time.Time
 	RestartCount int
 	InfraStatus  string      // "running" | "restarting" | "exited" | "paused"
-	Runtime      string      // "docker" (K8s added in Phase 5)
-	Mounts       []MountInfo // volumes and bind mounts attached to the container
+	Runtime      string      // "docker" | "k8s"
+	Mounts       []MountInfo // volumes and bind mounts attached to the container (Docker only)
+
+	// K8s-specific fields (zero-valued for Docker containers).
+	Pod       string // pod name
+	Namespace string // Kubernetes namespace
+	Node      string // node the pod is scheduled on
 }
 
 // WatchSet is the approved set of containers at a point in time.

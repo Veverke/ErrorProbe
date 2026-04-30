@@ -74,7 +74,7 @@ only the affected containers.`,
 
 		// Apply soft changes first (regenerate Vector config + SIGHUP).
 		if cs.HasSoft {
-			if err := configgen.GenerateVector(current, configsDir, containerNames); err != nil {
+			if err := configgen.GenerateVector(current, configsDir, containerNames, nil); err != nil {
 				return fmt.Errorf("regenerating Vector config: %w", err)
 			}
 			if err := cli.SendSignal(ctx, stack.ContainerVector, "SIGHUP"); err != nil {
@@ -99,7 +99,7 @@ only the affected containers.`,
 			if err := configgen.GenerateGrafanaDatasource(current, configsDir); err != nil {
 				return fmt.Errorf("regenerating Grafana datasource: %w", err)
 			}
-			if err := configgen.GenerateVector(current, configsDir, containerNames); err != nil {
+			if err := configgen.GenerateVector(current, configsDir, containerNames, nil); err != nil {
 				return fmt.Errorf("regenerating Vector config: %w", err)
 			}
 

@@ -16,6 +16,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/ingest"
+	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/pid"
 	"github.com/errorprobe/errorprobe/internal/stack"
@@ -96,7 +97,18 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		}()
 
 		gen := configgen.DefaultGenerator{}
-		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {})
+
+		// Attempt K8s auto-detect; log result for the startup summary.
+		var k8sClient k8s.K8sAPI
+		k8cCli, k8sErr := k8s.NewClient("")
+		if k8sErr == nil {
+			k8sClient = k8cCli
+			logger.Info("kubernetes cluster detected — K8s discovery enabled")
+		} else {
+			logger.Info("kubernetes cluster not available — K8s discovery disabled")
+		}
+
+		reconciler := discovery.NewReconciler(cfg, cli, k8sClient, gen, func() {})
 
 		// Delete the state file so the first reconciler tick always regenerates
 		// the Vector config. This is necessary because up.go writes an empty
