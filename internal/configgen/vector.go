@@ -3,6 +3,7 @@ package configgen
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -14,6 +15,20 @@ import (
 // delimited by single quotes (r'...').
 func escapeVRLPattern(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
+}
+
+// uniqueNamespaces returns a deduplicated, sorted list of namespace names from refs.
+func uniqueNamespaces(refs []discovery.K8sContainerRef) []string {
+	seen := make(map[string]struct{}, len(refs))
+	for _, r := range refs {
+		seen[r.Namespace] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for ns := range seen {
+		out = append(out, ns)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // GenerateVector writes vector.toml to outputDir using the embedded template.
@@ -31,6 +46,7 @@ func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []str
 	data := struct {
 		DockerContainers []string
 		K8sContainers    []discovery.K8sContainerRef
+		UniqueNamespaces []string
 		LokiHost         string
 		LokiPort         int
 		IngestEnabled    bool
@@ -41,6 +57,7 @@ func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []str
 	}{
 		DockerContainers: dockerContainers,
 		K8sContainers:    k8sContainers,
+		UniqueNamespaces: uniqueNamespaces(k8sContainers),
 		LokiHost:         "errorprobe-loki",
 		LokiPort:         cfg.Stack.Loki.Port,
 		IngestEnabled:    cfg.Stack.Ingest.Port > 0,

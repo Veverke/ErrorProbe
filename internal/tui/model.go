@@ -361,7 +361,13 @@ func (m Model) sortedNames() []string {
 	}
 	sort.Slice(names, func(i, j int) bool {
 		ri := rtByName[names[i]]
+		if ri == "" {
+			ri = "docker"
+		}
 		rj := rtByName[names[j]]
+		if rj == "" {
+			rj = "docker"
+		}
 		if ri != rj {
 			return ri < rj
 		}

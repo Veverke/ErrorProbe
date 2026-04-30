@@ -9,6 +9,7 @@ include_containers = [{{range $i, $c := .DockerContainers}}{{if $i}}, {{end}}"{{
 {{- if .K8sContainers}}
 [sources.k8s_logs]
 type = "kubernetes_logs"
+namespaces = [{{range $i, $ns := .UniqueNamespaces}}{{if $i}}, {{end}}"{{$ns}}"{{end}}]
 {{- end}}
 
 [transforms.normalize]

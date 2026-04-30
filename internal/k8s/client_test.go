@@ -73,7 +73,7 @@ func TestListPods_FakeClientset(t *testing.T) {
 	assert.Equal(t, "my-pod", pods[0].Name)
 }
 
-// TestStartedAt_ReturnsFirstRunningTime: first container's StartedAt is returned.
+// TestStartedAt_ReturnsEarliestRunningTime: minimum StartedAt among running containers is returned.
 func TestStartedAt_ReturnsFirstRunningTime(t *testing.T) {
 	now := time.Now()
 	containers := []k8s.ContainerInfo{
@@ -81,7 +81,7 @@ func TestStartedAt_ReturnsFirstRunningTime(t *testing.T) {
 		{Name: "b", Running: true, StartedAt: now.Add(-time.Hour)},
 	}
 	result := k8s.StartedAt(containers)
-	assert.Equal(t, now, result)
+	assert.Equal(t, now.Add(-time.Hour), result)
 }
 
 // TestStartedAt_NoneRunning_ReturnsZero: no running containers → zero time.

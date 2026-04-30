@@ -3,8 +3,6 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -81,19 +79,14 @@ func buildConfig(explicitPath string) (*rest.Config, error) {
 	if explicitPath != "" {
 		return clientcmd.BuildConfigFromFlags("", explicitPath)
 	}
-	// 2. KUBECONFIG env var.
-	if env := os.Getenv("KUBECONFIG"); env != "" {
-		return clientcmd.BuildConfigFromFlags("", env)
+	// 2–3. KUBECONFIG env var (supports colon/semicolon-separated path lists)
+	//      and ~/.kube/config fallback — both handled by NewDefaultClientConfigLoadingRules.
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{})
+	if cfg, err := cc.ClientConfig(); err == nil {
+		return cfg, nil
 	}
-	// 3. ~/.kube/config.
-	home, err := os.UserHomeDir()
-	if err == nil {
-		defaultPath := filepath.Join(home, ".kube", "config")
-		if _, statErr := os.Stat(defaultPath); statErr == nil {
-			return clientcmd.BuildConfigFromFlags("", defaultPath)
-		}
-	}
-	// 4. In-cluster.
+	// 4. In-cluster config (running inside a pod).
 	return rest.InClusterConfig()
 }
 
@@ -133,10 +126,14 @@ func podToInfo(pod corev1.Pod) PodInfo {
 
 // startedAt returns the earliest running container's StartedAt time, or zero.
 func startedAt(containers []ContainerInfo) time.Time {
+	var earliest time.Time
 	for _, c := range containers {
-		if !c.StartedAt.IsZero() {
-			return c.StartedAt
+		if !c.Running || c.StartedAt.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || c.StartedAt.Before(earliest) {
+			earliest = c.StartedAt
 		}
 	}
-	return time.Time{}
+	return earliest
 }

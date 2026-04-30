@@ -55,8 +55,11 @@ Use --runtime docker or --runtime k8s to filter by runtime.`,
 		merged := discovery.MergeContainers(dockerContainers, k8sContainers)
 		approved := discovery.ApplyPolicy(merged, cfg)
 
-		// Apply --runtime filter.
+		// Validate and apply --runtime filter.
 		if listRuntimeFlag != "" {
+			if listRuntimeFlag != "docker" && listRuntimeFlag != "k8s" {
+				return fmt.Errorf("unknown --runtime %q: must be \"docker\" or \"k8s\"", listRuntimeFlag)
+			}
 			filtered := approved[:0]
 			for _, c := range approved {
 				if c.Runtime == listRuntimeFlag {
@@ -179,4 +182,7 @@ func init() {
 	listCmd.Flags().BoolVar(&listJSONFlag, "json", false, "output as JSON array")
 	listCmd.Flags().BoolVar(&listDetailsFlag, "details", false, "show image and volume breakdown per container")
 	listCmd.Flags().StringVar(&listRuntimeFlag, "runtime", "", "filter by runtime: docker or k8s")
+	_ = listCmd.RegisterFlagCompletionFunc("runtime", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"docker", "k8s"}, cobra.ShellCompDirectiveNoFileComp
+	})
 }

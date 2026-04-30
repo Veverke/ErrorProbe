@@ -16,6 +16,11 @@ var defaultExcludeNamespaces = []string{
 	"kube-node-lease",
 }
 
+// restartingThreshold is the minimum RestartCount that causes a container to be
+// reported as infraStatus "restarting". Set to 1 to flag any restart; raise the
+// value (e.g. 3) to tolerate pods that restart once after a rolling deploy.
+const restartingThreshold = 1
+
 // ListRunningK8s returns ContainerMeta for every running container in every
 // running pod, across all non-system namespaces.
 //
@@ -54,8 +59,8 @@ func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Confi
 			}
 
 			infraStatus := "running"
-			if c.RestartCount > 0 {
-				// Treat high restart count as "restarting"; exact threshold is
+			if c.RestartCount >= restartingThreshold {
+				// Treat any nonzero restart count as "restarting"; this is
 				// informational only — health state comes from log events.
 				infraStatus = "restarting"
 			}
