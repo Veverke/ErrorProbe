@@ -109,7 +109,7 @@ func TestTail_StopsOnContextCancellation(t *testing.T) {
 
 	client := loki.NewClient(srv.URL)
 	var buf bytes.Buffer
-	err := client.Tail(ctx, `{container="myapp"}`, 15*time.Minute, &buf)
+	err := client.Tail(ctx, `{container="myapp"}`, 15*time.Minute, func(l loki.LogLine) string { return l.Line }, &buf)
 	if err != nil {
 		t.Fatalf("expected nil on context cancellation, got: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestTail_AdvancesStartTimestamp(t *testing.T) {
 
 	client := loki.NewClient(srv.URL)
 	var buf bytes.Buffer
-	_ = client.Tail(ctx, `{container="myapp"}`, 15*time.Minute, &buf)
+	_ = client.Tail(ctx, `{container="myapp"}`, 15*time.Minute, func(l loki.LogLine) string { return l.Line }, &buf)
 
 	if callCount < 2 {
 		t.Fatalf("expected at least 2 polls, got %d", callCount)

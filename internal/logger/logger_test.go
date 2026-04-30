@@ -60,6 +60,9 @@ func TestInfo_WritesToFile(t *testing.T) {
 	if !strings.Contains(content, "hello world") {
 		t.Errorf("expected message in log, got: %s", content)
 	}
+	if !strings.Contains(content, "]:") {
+		t.Errorf("expected [timestamp]: format in log, got: %s", content)
+	}
 }
 
 func TestError_WritesToFile(t *testing.T) {
@@ -136,5 +139,20 @@ func TestError_WithKeyValueFields(t *testing.T) {
 	}
 	if !strings.Contains(content, "host=localhost") {
 		t.Errorf("expected host=localhost in log, got: %s", content)
+	}
+}
+
+func TestFormatJSON_ConsoleOutput(t *testing.T) {
+	SetFormat(FormatJSON)
+	t.Cleanup(func() { SetFormat(FormatText) })
+	line := formatJSON("INFO", "test message", "key", "value")
+	if !strings.Contains(line, `"level":"info"`) {
+		t.Errorf("expected level in JSON, got: %s", line)
+	}
+	if !strings.Contains(line, `"msg":"test message"`) {
+		t.Errorf("expected msg in JSON, got: %s", line)
+	}
+	if !strings.Contains(line, `"key":"value"`) {
+		t.Errorf("expected key=value in JSON, got: %s", line)
 	}
 }

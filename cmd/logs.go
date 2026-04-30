@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,8 +19,9 @@ import (
 )
 
 var (
-	errorsOnly bool
-	logsSince  string
+	errorsOnly     bool
+	logsSince      string
+	logsJSONOutput bool
 )
 
 var logsCmd = &cobra.Command{
@@ -78,11 +80,42 @@ Use --since to set the lookback window (e.g. --since 30m). Defaults to 15 minute
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		return loki.NewClient(lokiBase).Tail(ctx, query, since, os.Stdout)
+		// Build the line formatter.
+		var formatter func(loki.LogLine) string
+		if logsJSONOutput {
+			type logEntry struct {
+				Time      string `json:"time"`
+				Container string `json:"container"`
+				Line      string `json:"line"`
+			}
+			formatter = func(l loki.LogLine) string {
+				b, _ := json.Marshal(logEntry{
+					Time:      l.Timestamp.Format(time.RFC3339Nano),
+					Container: containerName,
+					Line:      l.Line,
+				})
+				return string(b)
+			}
+		} else {
+			// Vector encodes each line as JSON with a "raw" field containing the
+			// original log text. Extract it; fall back to the full line if not present.
+			formatter = func(l loki.LogLine) string {
+				var v struct {
+					Raw string `json:"raw"`
+				}
+				if err := json.Unmarshal([]byte(l.Line), &v); err == nil && v.Raw != "" {
+					return v.Raw
+				}
+				return l.Line
+			}
+		}
+
+		return loki.NewClient(lokiBase).Tail(ctx, query, since, formatter, os.Stdout)
 	},
 }
 
 func init() {
 	logsCmd.Flags().BoolVar(&errorsOnly, "errors-only", false, "show only log lines matching configured error severity patterns")
 	logsCmd.Flags().StringVar(&logsSince, "since", "", "lookback window (e.g. 30m, 1h); defaults to 15m")
+	logsCmd.Flags().BoolVar(&logsJSONOutput, "json", false, "output log lines as JSONL: {\"time\",\"container\",\"line\"}")
 }

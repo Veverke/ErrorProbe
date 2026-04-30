@@ -3,9 +3,12 @@ package stack
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/docker"
+	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pid"
 )
 
 // Down stops and removes the observability stack containers and the shared network.
@@ -24,7 +27,7 @@ func Down(ctx context.Context, cfg *config.Config, purge bool, onStatus func(str
 
 // downCore is the testable implementation of Down. It receives an
 // already-created Docker client so that tests can inject a mock.
-func downCore(ctx context.Context, _ *config.Config, cli docker.DockerAPI, purge bool, onStatus func(string)) error {
+func downCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, purge bool, onStatus func(string)) error {
 	if onStatus == nil {
 		onStatus = func(string) {}
 	}
@@ -55,6 +58,19 @@ func downCore(ctx context.Context, _ *config.Config, cli docker.DockerAPI, purge
 			if err := cli.RemoveVolume(ctx, vol); err != nil {
 				return err
 			}
+		}
+
+		// Remove the user profile directory (~/.errorprobe/).
+		// First kill any running 'ep up' process so its log handle is released.
+		dataDir := cfg.DataDir()
+		pidPath := cfg.StateDir() + "ep.pid"
+		if err := pid.KillRunning(pidPath); err != nil {
+			return fmt.Errorf("stopping ep up process: %w", err)
+		}
+		onStatus(fmt.Sprintf("removing user profile data at %s", dataDir))
+		logger.Close() // release this process's own log handle
+		if err := os.RemoveAll(dataDir); err != nil {
+			return fmt.Errorf("removing data directory %s: %w", dataDir, err)
 		}
 	}
 

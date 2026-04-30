@@ -173,8 +173,7 @@ func (m Model) View() string {
 		infraState[c.Name] = c.InfraStatus
 	}
 
-	header := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n)) +
-		"          " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [g] grafana  [q] quit")
+	header := m.renderHeader(n)
 
 	// EKG color reflects overall health: green = all OK, yellow = has errors.
 	hasErrors := false
@@ -207,7 +206,9 @@ func (m Model) View() string {
 		padRight("LAST ERROR", col4W)
 
 	rows := make([]string, 0, len(names)+6)
-	rows = append(rows, header)
+	for _, h := range header {
+		rows = append(rows, h)
+	}
 	if m.statusMsg != "" {
 		rows = append(rows, statusErrStyle.Render("⚠ "+m.statusMsg))
 	}
@@ -260,6 +261,34 @@ func (m Model) View() string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// renderHeader returns 1 or 2 lines depending on terminal width.
+// The hint keys are split across two lines when the terminal is too narrow
+// to fit them all on one line beside the title.
+func (m Model) renderHeader(n int) []string {
+	title := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n))
+	titleW := lipgloss.Width(title)
+
+	hintsAll := "[↑↓] navigate  [e] expand  [r] reset  [g] grafana  [q] quit"
+	hintsA := "[↑↓] navigate  [e] expand  [r] reset"
+	hintsB := "[g] grafana  [q] quit"
+
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+
+	// Try single line: title + 2 spaces + full hint.
+	if titleW+2+len(hintsAll) <= w {
+		return []string{title + "  " + dimStyle.Render(hintsAll)}
+	}
+
+	// Two-line fallback.
+	return []string{
+		title + "  " + dimStyle.Render(hintsA),
+		strings.Repeat(" ", titleW+2) + dimStyle.Render(hintsB),
+	}
 }
 
 // sortedNames returns a deterministically ordered list of all container names

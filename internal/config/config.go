@@ -22,7 +22,7 @@ type Config struct {
 type Stack struct {
 	Vector  VectorConfig  `mapstructure:"vector"`
 	Loki    LokiConfig    `mapstructure:"loki"`
-Grafana GrafanaConfig `mapstructure:"grafana"`
+	Grafana GrafanaConfig `mapstructure:"grafana"`
 	Ingest  IngestConfig  `mapstructure:"ingest"`
 }
 
@@ -71,6 +71,12 @@ type Containers struct {
 type Check struct {
 	FailOn  string   `mapstructure:"fail_on"`
 	Exclude []string `mapstructure:"exclude"`
+}
+
+// DataDir returns the root ~/.errorprobe/ directory that holds all
+// errorprobe-managed data (configs, state, logs).
+func (c *Config) DataDir() string {
+	return filepath.Join(homeDir(), ".errorprobe") + string(filepath.Separator)
 }
 
 // StateDir returns the path to the state directory.

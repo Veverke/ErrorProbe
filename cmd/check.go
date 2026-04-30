@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -69,7 +70,11 @@ Under fail_on=FAILING, containers in HAS_ERRORS state will pass the check.`,
 			fmt.Println("All containers healthy")
 		} else {
 			for _, f := range failing {
-				fmt.Fprintf(os.Stderr, "  %s  state=%s  last_error=%q\n", f.Name, f.State, f.LastErrorMsg)
+				at := ""
+				if f.LastErrorAt != nil {
+					at = "  at=" + f.LastErrorAt.Local().Format("2006-01-02 15:04:05")
+				}
+				fmt.Fprintf(os.Stderr, "  %s  state=%s  last_error=%q%s\n", f.Name, f.State, f.LastErrorMsg, at)
 			}
 		}
 
@@ -82,9 +87,10 @@ Under fail_on=FAILING, containers in HAS_ERRORS state will pass the check.`,
 
 // CheckResult is a single failing container entry.
 type CheckResult struct {
-	Name         string `json:"name"`
-	State        string `json:"state"`
-	LastErrorMsg string `json:"last_error_msg"`
+	Name         string     `json:"name"`
+	State        string     `json:"state"`
+	LastErrorAt  *time.Time `json:"last_error_at,omitempty"`
+	LastErrorMsg string     `json:"last_error_msg"`
 }
 
 // evalCheck evaluates the health snapshot against check settings and returns
@@ -111,6 +117,7 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 				failing = append(failing, CheckResult{
 					Name:         name,
 					State:        string(ch.State),
+					LastErrorAt:  ch.LastErrorAt,
 					LastErrorMsg: ch.LastErrorMsg,
 				})
 			}
@@ -119,6 +126,7 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 				failing = append(failing, CheckResult{
 					Name:         name,
 					State:        string(ch.State),
+					LastErrorAt:  ch.LastErrorAt,
 					LastErrorMsg: ch.LastErrorMsg,
 				})
 			}

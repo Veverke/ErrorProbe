@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"fmt"
-	"time"
-
 	"github.com/spf13/cobra"
 
 	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
@@ -24,15 +22,12 @@ Named Docker volumes (log data, Grafana state) are preserved unless --purge is g
 		}
 
 		onStatus := func(msg string) {
-			fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), msg)
+			logger.Info(msg)
 		}
-		if err := stack.Down(cmd.Context(), cfg, purgeFlag, onStatus); err != nil {
-			return err
-		}
-		return nil
+		return stack.Down(cmd.Context(), cfg, purgeFlag, onStatus)
 	},
 }
 
 func init() {
-	downCmd.Flags().BoolVar(&purgeFlag, "purge", false, "also remove data volumes (loki-data, grafana-data)")
+	downCmd.Flags().BoolVar(&purgeFlag, "purge", false, "also remove data volumes and ~/.errorprobe/ (full uninstall)")
 }

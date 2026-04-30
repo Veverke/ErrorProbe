@@ -14,6 +14,7 @@ import (
 var (
 	cfgFile   string
 	debugMode bool
+	logFmt    string
 )
 
 // Version is injected at build time via -ldflags.
@@ -38,6 +39,12 @@ semantic health signal — no manual infrastructure setup required.`,
 			return fmt.Errorf("initialising logger: %w", err)
 		}
 		logger.SetDebug(debugMode)
+		switch logFmt {
+		case "json":
+			logger.SetFormat(logger.FormatJSON)
+		default:
+			logger.SetFormat(logger.FormatText)
+		}
 		logger.Info("errorprobe started", "command", cmd.Name())
 		if debugMode {
 			logger.Debug("debug mode enabled")
@@ -54,6 +61,7 @@ func Execute() error {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "path to config file (default: ./errorprobe.yaml or ~/.errorprobe/config.yaml)")
 	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "enable verbose debug logging")
+	rootCmd.PersistentFlags().StringVar(&logFmt, "log-format", "text", "log output format: text or json")
 	rootCmd.SetVersionTemplate("errorprobe {{.Version}}\n")
 
 	rootCmd.AddCommand(

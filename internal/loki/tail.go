@@ -7,10 +7,11 @@ import (
 	"time"
 )
 
-// Tail polls Loki's query_range endpoint and writes new log lines to out.
-// It advances the start timestamp after each batch to avoid printing duplicates,
+// Tail polls Loki's query_range endpoint and writes formatted log lines to out.
+// format is called for each LogLine; its return value is written as one line.
+// Tail advances the start timestamp after each batch to avoid duplicates,
 // and returns nil when ctx is cancelled.
-func (c *Client) Tail(ctx context.Context, query string, since time.Duration, out io.Writer) error {
+func (c *Client) Tail(ctx context.Context, query string, since time.Duration, format func(LogLine) string, out io.Writer) error {
 	start := time.Now().Add(-since)
 
 	poll := func() error {
@@ -23,7 +24,7 @@ func (c *Client) Tail(ctx context.Context, query string, since time.Duration, ou
 			return fmt.Errorf("polling Loki: %w", err)
 		}
 		for _, l := range lines {
-			fmt.Fprintln(out, l.Line)
+			fmt.Fprintln(out, format(l))
 		}
 		if len(lines) > 0 {
 			// Advance past the last seen timestamp to avoid reprinting on the next poll.

@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -17,6 +16,8 @@ import (
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/ingest"
+	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pid"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
@@ -36,7 +37,7 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		}
 
 		onStatus := func(msg string) {
-			fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), msg)
+			logger.Info(msg)
 		}
 
 		if err := stack.Up(cmd.Context(), cfg, onStatus); err != nil {
@@ -71,6 +72,13 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		watched := discovery.ApplyPolicy(containers, cfg)
 		printReadyBanner(cfg, len(watched), ingestAddr)
 
+		// Write PID file so 'ep down --purge' can locate and terminate us.
+		pidPath := cfg.StateDir() + "ep.pid"
+		if err := pid.Write(pidPath); err != nil {
+			logger.Error("could not write pid file", "err", err)
+		}
+		defer pid.Remove(pidPath)
+
 		// Start health engine (loads persisted state if present).
 		snapshotPath := cfg.StateDir() + "health.json"
 		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
@@ -83,14 +91,12 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		go func() {
 			if err := transport.Start(ctx); err != nil {
-				onStatus(fmt.Sprintf("ingest transport stopped: %v", err))
+				logger.Error("ingest transport stopped", "err", err)
 			}
 		}()
 
 		gen := configgen.DefaultGenerator{}
-		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {
-			onStatus("container set changed — Vector config reloaded")
-		})
+		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {})
 
 		// Delete the state file so the first reconciler tick always regenerates
 		// the Vector config. This is necessary because up.go writes an empty
@@ -102,19 +108,22 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 	},
 }
 
-const bannerRule = "─────────────────────────────────────────────"
+// printBoxed prints msg surrounded by a plain-ASCII single-char box.
+func printBoxed(msg string) {
+	rule := strings.Repeat("=", len(msg)+6)
+	fmt.Println(rule)
+	fmt.Printf("|  %s  |\n", msg)
+	fmt.Println(rule)
+}
 
 func printReadyBanner(cfg *config.Config, watchCount int, ingestAddr string) {
-	lines := []string{
-		"ErrorProbe ready",
-		bannerRule,
-		fmt.Sprintf("Watching %d containers", watchCount),
-		fmt.Sprintf("Grafana:   http://localhost:%d", cfg.Stack.Grafana.Port),
-		fmt.Sprintf("Loki:      http://localhost:%d", cfg.Stack.Loki.Port),
-		fmt.Sprintf("Ingest:    http://%s", ingestAddr),
-		bannerRule,
-		"Run 'errorprobe watch' to monitor in real-time",
-		"Run 'errorprobe check' to use in CI/scripts",
-	}
-	fmt.Println(strings.Join(lines, "\n"))
+	fmt.Println()
+	fmt.Printf("  ErrorProbe is ready — watching %d containers\n", watchCount)
+	fmt.Printf("  Grafana  http://localhost:%d\n", cfg.Stack.Grafana.Port)
+	fmt.Printf("  Loki     http://localhost:%d\n", cfg.Stack.Loki.Port)
+	fmt.Printf("  Ingest   http://%s\n", ingestAddr)
+	fmt.Println()
+	printBoxed("Run 'ep watch' to monitor in real-time")
+	printBoxed("Run 'ep check' to use in CI/scripts")
+	fmt.Println()
 }
