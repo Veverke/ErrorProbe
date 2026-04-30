@@ -10,11 +10,11 @@ import (
 )
 
 // EvalCheck exposes the internal evalCheck function for unit testing.
-func EvalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckResult) {
+func EvalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckResult, error) {
 	return evalCheck(snap, check)
 }
 
 // WriteCheckJSON exposes writeCheckJSON for unit testing.
-func WriteCheckJSON(w io.Writer, ok bool, failing []CheckResult) {
-	writeCheckJSON(w, ok, failing)
+func WriteCheckJSON(w io.Writer, ok bool, failing []CheckResult) error {
+	return writeCheckJSON(w, ok, failing)
 }

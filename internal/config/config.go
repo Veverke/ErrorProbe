@@ -137,6 +137,10 @@ func Load(projectDir string) (*Config, error) {
 		return nil, fmt.Errorf("unsupported version %d: only version 1 is supported", cfg.Version)
 	}
 
+	if cfg.Check.FailOn != "" && cfg.Check.FailOn != "HAS_ERRORS" && cfg.Check.FailOn != "FAILING" {
+		return nil, fmt.Errorf("invalid check.fail_on %q: must be HAS_ERRORS or FAILING", cfg.Check.FailOn)
+	}
+
 	return &cfg, nil
 }
 

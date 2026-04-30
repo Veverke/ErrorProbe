@@ -13,6 +13,7 @@ import (
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/configgen"
+	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
@@ -43,12 +44,11 @@ only the affected containers.`,
 			return fmt.Errorf("checking stack: %w", err)
 		}
 		if !running {
-			fmt.Fprintln(os.Stderr, "errorprobe stack is not running — run 'errorprobe up' first")
-			os.Exit(1)
+			return errors.New("errorprobe stack is not running — run 'errorprobe up' first")
 		}
 
 		// Load the previously saved config.
-		prevCfg, err := loadSavedConfig(current.StateDir())
+		prevCfg, err := loadSavedConfig(current.StateDir(), current)
 		if err != nil {
 			return fmt.Errorf("loading previous config state: %w", err)
 		}
@@ -62,9 +62,19 @@ only the affected containers.`,
 
 		configsDir := current.ConfigsDir()
 
+		// Load the persisted watch set to pass the current container list to Vector.
+		ws, wsErr := discovery.LoadWatchSet(current.StateDir() + "containers.json")
+		if wsErr != nil {
+			fmt.Printf("warning: could not load container watch set: %v — regenerating with empty list\n", wsErr)
+		}
+		containerNames := make([]string, 0, len(ws.Containers))
+		for _, c := range ws.Containers {
+			containerNames = append(containerNames, c.Name)
+		}
+
 		// Apply soft changes first (regenerate Vector config + SIGHUP).
 		if cs.HasSoft {
-			if err := configgen.GenerateVector(current, configsDir, nil); err != nil {
+			if err := configgen.GenerateVector(current, configsDir, containerNames); err != nil {
 				return fmt.Errorf("regenerating Vector config: %w", err)
 			}
 			if err := cli.SendSignal(ctx, stack.ContainerVector, "SIGHUP"); err != nil {
@@ -89,7 +99,7 @@ only the affected containers.`,
 			if err := configgen.GenerateGrafanaDatasource(current, configsDir); err != nil {
 				return fmt.Errorf("regenerating Grafana datasource: %w", err)
 			}
-			if err := configgen.GenerateVector(current, configsDir, nil); err != nil {
+			if err := configgen.GenerateVector(current, configsDir, containerNames); err != nil {
 				return fmt.Errorf("regenerating Vector config: %w", err)
 			}
 
@@ -161,13 +171,13 @@ func saveConfig(cfg *config.Config) error {
 	return nil
 }
 
-func loadSavedConfig(stateDir string) (*config.Config, error) {
+func loadSavedConfig(stateDir string, current *config.Config) (*config.Config, error) {
 	path := savedConfigPath(stateDir)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// No saved state — treat as equal to current (no changes).
-			return &config.Config{}, nil
+			// No saved state — use current config as baseline so no changes are reported.
+			return current, nil
 		}
 		return nil, fmt.Errorf("reading saved config: %w", err)
 	}

@@ -56,10 +56,15 @@ Under fail_on=FAILING, containers in HAS_ERRORS state will pass the check.`,
 			return fmt.Errorf("loading health snapshot: %w", err)
 		}
 
-		ok, failing := evalCheck(snap, cfg.Check)
+		ok, failing, err := evalCheck(snap, cfg.Check)
+		if err != nil {
+			return fmt.Errorf("evaluating check: %w", err)
+		}
 
 		if checkJSONOutput {
-			writeCheckJSON(os.Stdout, ok, failing)
+			if err := writeCheckJSON(os.Stdout, ok, failing); err != nil {
+				return fmt.Errorf("writing JSON output: %w", err)
+			}
 		} else if ok {
 			fmt.Println("All containers healthy")
 		} else {
@@ -83,8 +88,8 @@ type CheckResult struct {
 }
 
 // evalCheck evaluates the health snapshot against check settings and returns
-// (ok bool, failing []CheckResult).  It is a pure function — no I/O.
-func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckResult) {
+// (ok bool, failing []CheckResult, err error).  It is a pure function — no I/O.
+func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckResult, error) {
 	excluded := make(map[string]bool, len(check.Exclude))
 	for _, name := range check.Exclude {
 		excluded[name] = true
@@ -117,12 +122,14 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 					LastErrorMsg: ch.LastErrorMsg,
 				})
 			}
+		default:
+			return false, nil, fmt.Errorf("unsupported fail_on value %q", failOn)
 		}
 	}
-	return len(failing) == 0, failing
+	return len(failing) == 0, failing, nil
 }
 
-func writeCheckJSON(w io.Writer, ok bool, failing []CheckResult) {
+func writeCheckJSON(w io.Writer, ok bool, failing []CheckResult) error {
 	out := struct {
 		OK      bool          `json:"ok"`
 		Failing []CheckResult `json:"failing"`
@@ -132,7 +139,7 @@ func writeCheckJSON(w io.Writer, ok bool, failing []CheckResult) {
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(out)
+	return enc.Encode(out)
 }
 
 func init() {

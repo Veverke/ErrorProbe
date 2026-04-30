@@ -64,7 +64,10 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		}
 		ingestAddr := bind + ":" + strconv.Itoa(port)
 
-		containers, _ := discovery.ListRunning(ctx, cli)
+		containers, err := discovery.ListRunning(ctx, cli)
+		if err != nil {
+			return fmt.Errorf("initial container discovery: %w", err)
+		}
 		watched := discovery.ApplyPolicy(containers, cfg)
 		printReadyBanner(cfg, len(watched), ingestAddr)
 

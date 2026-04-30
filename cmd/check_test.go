@@ -42,7 +42,10 @@ func snapWithState(name string, state health.FunctionalState, errMsg string) hea
 func TestCheck_AllOK_ExitsZero(t *testing.T) {
 	snap := snapWithState("myapp", health.StateOK, "")
 	check := config.Check{FailOn: "HAS_ERRORS"}
-	ok, failing := cmd.EvalCheck(snap, check)
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Errorf("expected ok=true, got failing: %v", failing)
 	}
@@ -54,7 +57,10 @@ func TestCheck_AllOK_ExitsZero(t *testing.T) {
 func TestCheck_HasErrors_FailOnHasErrors_ExitsOne(t *testing.T) {
 	snap := snapWithState("broken", health.StateHasErrors, "connection refused")
 	check := config.Check{FailOn: "HAS_ERRORS"}
-	ok, failing := cmd.EvalCheck(snap, check)
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ok {
 		t.Error("expected ok=false")
 	}
@@ -67,7 +73,10 @@ func TestCheck_HasErrors_FailOnFailing_ExitsZero(t *testing.T) {
 	// HAS_ERRORS should NOT trigger failure under fail_on=FAILING.
 	snap := snapWithState("broken", health.StateHasErrors, "connection refused")
 	check := config.Check{FailOn: "FAILING"}
-	ok, failing := cmd.EvalCheck(snap, check)
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Errorf("expected ok=true under FAILING threshold, got failing: %v", failing)
 	}
@@ -76,7 +85,10 @@ func TestCheck_HasErrors_FailOnFailing_ExitsZero(t *testing.T) {
 func TestCheck_ExcludedContainer_NotEvaluated(t *testing.T) {
 	snap := snapWithState("noisy", health.StateHasErrors, "lots of errors")
 	check := config.Check{FailOn: "HAS_ERRORS", Exclude: []string{"noisy"}}
-	ok, failing := cmd.EvalCheck(snap, check)
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Errorf("excluded container should not trigger failure, got: %v", failing)
 	}
@@ -86,7 +98,10 @@ func TestCheck_DefaultFailOn_IsHasErrors(t *testing.T) {
 	// Empty FailOn defaults to HAS_ERRORS.
 	snap := snapWithState("broken", health.StateHasErrors, "oops")
 	check := config.Check{} // FailOn empty → default HAS_ERRORS
-	ok, _ := cmd.EvalCheck(snap, check)
+	ok, _, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if ok {
 		t.Error("expected ok=false when FailOn defaults to HAS_ERRORS")
 	}
@@ -95,10 +110,15 @@ func TestCheck_DefaultFailOn_IsHasErrors(t *testing.T) {
 func TestCheck_JSON_Output(t *testing.T) {
 	snap := snapWithState("broken", health.StateHasErrors, "timeout")
 	check := config.Check{FailOn: "HAS_ERRORS"}
-	ok, failing := cmd.EvalCheck(snap, check)
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	var buf bytes.Buffer
-	cmd.WriteCheckJSON(&buf, ok, failing)
+	if err := cmd.WriteCheckJSON(&buf, ok, failing); err != nil {
+		t.Fatalf("WriteCheckJSON returned error: %v", err)
+	}
 
 	var out struct {
 		OK      bool `json:"ok"`
@@ -121,10 +141,15 @@ func TestCheck_JSON_Output(t *testing.T) {
 func TestCheck_JSON_Output_AllOK(t *testing.T) {
 	snap := health.HealthSnapshot{Containers: map[string]health.ContainerHealth{}}
 	check := config.Check{FailOn: "HAS_ERRORS"}
-	ok, failing := cmd.EvalCheck(snap, check)
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	var buf bytes.Buffer
-	cmd.WriteCheckJSON(&buf, ok, failing)
+	if err := cmd.WriteCheckJSON(&buf, ok, failing); err != nil {
+		t.Fatalf("WriteCheckJSON returned error: %v", err)
+	}
 
 	var out struct {
 		OK      bool          `json:"ok"`
@@ -138,5 +163,14 @@ func TestCheck_JSON_Output_AllOK(t *testing.T) {
 	}
 	if out.Failing == nil {
 		t.Error("expected failing to be [] not null")
+	}
+}
+
+func TestCheck_UnknownFailOn_ReturnsError(t *testing.T) {
+	snap := snapWithState("myapp", health.StateOK, "")
+	check := config.Check{FailOn: "HAS_ERROR"} // typo — should fail
+	_, _, err := cmd.EvalCheck(snap, check)
+	if err == nil {
+		t.Error("expected error for unsupported fail_on value, got nil")
 	}
 }

@@ -56,7 +56,7 @@ func ListRunning(ctx context.Context, dockerClient docker.DockerAPI) ([]Containe
 			Runtime:     "docker",
 		}
 
-		// Enrich with inspect data for RestartCount and StartedAt.
+		// Enrich with inspect data for RestartCount, StartedAt, and mounts.
 		info, err := dockerClient.ContainerInspect(ctx, s.ID)
 		if err == nil && info.ContainerJSONBase != nil {
 			meta.RestartCount = info.RestartCount
@@ -65,6 +65,15 @@ func ListRunning(ctx context.Context, dockerClient docker.DockerAPI) ([]Containe
 				if t, err := time.Parse(time.RFC3339Nano, info.State.StartedAt); err == nil {
 					meta.StartedAt = t
 				}
+			}
+			for _, m := range info.Mounts {
+				meta.Mounts = append(meta.Mounts, MountInfo{
+					Type:        string(m.Type),
+					Name:        m.Name,
+					Source:      m.Source,
+					Destination: m.Destination,
+					ReadOnly:    !m.RW,
+				})
 			}
 		}
 

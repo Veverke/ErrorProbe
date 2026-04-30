@@ -2,6 +2,15 @@ package discovery
 
 import "time"
 
+// MountInfo describes a single mount point attached to a container.
+type MountInfo struct {
+	Type        string // "volume", "bind", "tmpfs"
+	Name        string // volume name (non-empty for named volumes)
+	Source      string // host path (bind mounts) or volume storage path
+	Destination string // path inside the container
+	ReadOnly    bool
+}
+
 // ContainerMeta holds the metadata for a single discovered container.
 type ContainerMeta struct {
 	ID           string
@@ -10,8 +19,9 @@ type ContainerMeta struct {
 	Labels       map[string]string
 	StartedAt    time.Time
 	RestartCount int
-	InfraStatus  string // "running" | "restarting" | "exited" | "paused"
-	Runtime      string // "docker" (K8s added in Phase 5)
+	InfraStatus  string      // "running" | "restarting" | "exited" | "paused"
+	Runtime      string      // "docker" (K8s added in Phase 5)
+	Mounts       []MountInfo // volumes and bind mounts attached to the container
 }
 
 // WatchSet is the approved set of containers at a point in time.

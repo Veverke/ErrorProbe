@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/spf13/cobra"
 
 	"github.com/errorprobe/errorprobe/internal/config"
@@ -20,7 +23,10 @@ Named Docker volumes (log data, Grafana state) are preserved unless --purge is g
 			return err
 		}
 
-		if err := stack.Down(cmd.Context(), cfg, purgeFlag); err != nil {
+		onStatus := func(msg string) {
+			fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), msg)
+		}
+		if err := stack.Down(cmd.Context(), cfg, purgeFlag, onStatus); err != nil {
 			return err
 		}
 		return nil

@@ -328,5 +328,11 @@ func openBrowser(url string) error {
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if cmd.Process != nil {
+		return cmd.Process.Release()
+	}
+	return nil
 }
