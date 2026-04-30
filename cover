@@ -1,0 +1,10 @@
+The recommendation is to delete the `cover` file and add it to `.gitignore`. Since you asked for the corrected version of lines 1–72 of the file, and the recommendation is to remove this file entirely, the file should be deleted.
+
+Add `cover` to your `.gitignore`:
+
+```
+cover
+*.coverprofile
+```
+
+The `cover` file itself should be deleted from the repository.

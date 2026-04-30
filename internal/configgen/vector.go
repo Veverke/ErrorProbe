@@ -46,7 +46,7 @@ func GenerateVector(cfg *config.Config, outputDir string, containers []string) e
 		LokiHost:      "errorprobe-loki",
 		LokiPort:      cfg.Stack.Loki.Port,
 		IngestEnabled: cfg.Stack.Ingest.Port > 0,
-		IngestHost:    cfg.Stack.Ingest.Bind,
+		IngestHost:    ingestHost(cfg.Stack.Ingest.Bind),
 		IngestPort:    cfg.Stack.Ingest.Port,
 		ErrorPatterns: cfg.Detection.SeverityPatterns.Error,
 		WarnPatterns:  cfg.Detection.SeverityPatterns.Warn,
@@ -67,4 +67,18 @@ func GenerateVector(cfg *config.Config, outputDir string, containers []string) e
 		return wrapErr("rendering vector template", err)
 	}
 	return nil
+}
+
+// ingestHost maps the configured bind address to the address Vector (running
+// inside Docker) should use to reach the host process.
+// 127.0.0.1 / 0.0.0.0 / localhost are loopback addresses that are unreachable
+// from inside a container; Docker Desktop on Windows and macOS provides the
+// special DNS name host.docker.internal for exactly this purpose.
+func ingestHost(bind string) string {
+	switch bind {
+	case "127.0.0.1", "0.0.0.0", "localhost", "":
+		return "host.docker.internal"
+	default:
+		return bind
+	}
 }

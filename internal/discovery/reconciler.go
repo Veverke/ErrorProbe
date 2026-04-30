@@ -87,6 +87,12 @@ func (r *Reconciler) tick(ctx context.Context) error {
 	if len(added) == 0 && len(removed) == 0 {
 		return nil
 	}
+	for _, c := range added {
+		logger.Info("container added to watch set", "container", c.Name)
+	}
+	for _, c := range removed {
+		logger.Info("container removed from watch set", "container", c.Name)
+	}
 
 	// 4. Regenerate Vector config.
 	names := make([]string, len(approved))
@@ -97,19 +103,30 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		return fmt.Errorf("generating vector config: %w", err)
 	}
 
-	// 5. Send SIGHUP to Vector container. If this fails, return an error so the
-	// tick is retried and the watch set is not persisted, preventing the diff
-	// from being suppressed on subsequent ticks.
-	if err := r.docker.SendSignal(ctx, "errorprobe-vector", "SIGHUP"); err != nil {
-		return fmt.Errorf("sending SIGHUP to vector: %w", err)
-	}
-
-	// 6. Persist new watch set only after a successful reload signal.
+	// 5. Persist new watch set before signalling Vector.
+	// Decoupling persistence from the signal means the watch set stays up to
+	// date even if Vector is temporarily unhealthy.
 	if err := SaveWatchSet(r.statePath, current); err != nil {
 		return fmt.Errorf("saving watch set: %w", err)
 	}
 
-	// 7. Notify caller.
+	// 6. Send SIGHUP to Vector container. Log on failure but do not return an
+	// error — the config has already been regenerated and persisted; Vector will
+	// pick it up on its next restart.
+	vectorRunning, err := r.docker.ContainerRunning(ctx, "errorprobe-vector")
+	if err != nil {
+		logger.Error("checking vector container state", "err", err)
+	} else if !vectorRunning {
+		logger.Info("vector container not running — config updated, reload deferred until restart")
+	} else {
+		if err := r.docker.SendSignal(ctx, "errorprobe-vector", "SIGHUP"); err != nil {
+			logger.Error("sending SIGHUP to vector", "err", err)
+		} else {
+			logger.Info("vector config reloaded", "watching", len(approved))
+		}
+	}
+
+	// 7. Notify caller whenever the watch set changed, regardless of SIGHUP outcome.
 	if r.onReload != nil {
 		r.onReload()
 	}

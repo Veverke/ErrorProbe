@@ -3,7 +3,6 @@
 ---
 
 ## Overview
-
 This document defines the implementation phases to transform the intent defined in `intent.md` into a working solution, following the architecture defined in `architecture.md`.
 
 Each phase has a clear goal, a definition of done, and an ordered task list. Tasks within a phase are ordered by dependency — each task assumes the previous ones are complete.
@@ -72,7 +71,7 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 2 — Container Discovery *(in progress)*
+## Phase 2 — Container Discovery *(completed 2026-04-29)*
 
 **Goal:** ErrorProbe discovers all running user containers, applies watch policy, generates a Vector config scoped to the approved set, and reloads Vector when the set changes.
 
@@ -85,26 +84,26 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 - [x] VRL transform: normalise all log lines to schema `{ timestamp, container, level, message, raw }`; apply severity inference against `detection.severity_patterns`; emit to both Loki sink and ErrorProbe HTTP sink
 - [x] Reconciliation loop: run discovery every 5 seconds; diff against previous approved set; on change, regenerate Vector config and send `SIGHUP` to Vector container via Docker API
 - [x] Implement `errorprobe list` command: tabular output — container name, image, status, infra health (running / restarting / exited), watching (yes/no)
-- [ ] Validate end-to-end: logs from a running container flow through Vector → Loki; query Loki LogQL to confirm labels (`container`, `level`) are correct
+- [x] Validate end-to-end: logs from a running container flow through Vector → Loki; query Loki LogQL to confirm labels (`container`, `level`) are correct
 
 **Exit criterion:** `errorprobe list` shows all running containers with correct watch status. Any log line from a watched container appears in Loki with correct `container` and `level` labels within 2 seconds. Starting a new container while `errorprobe` is running causes it to appear in the next reconciliation cycle.
 
 ---
 
-## Phase 3 — Semantic Health Engine (Tier 1)
+## Phase 3 — Semantic Health Engine (Tier 1) *(completed 2026-04-29)*
 
 **Goal:** Real-time error detection. `errorprobe status` shows per-container functional health. `errorprobe watch` provides a live TUI.
 
 ### Tasks
 
-- [ ] Implement `ingest` package: transport interface `Ingest(batch []LogEvent)`; HTTP JSON implementation binding on `127.0.0.1:{ingest.port}` (default 9099)
-- [ ] Implement `health` package: in-memory per-container state machine (`OK` → `HAS_ERRORS`); Tier 1 trigger: any inbound log event with `level = error` or `level = warn` flips container to `HAS_ERRORS`
-- [ ] Persist health snapshot to `~/.errorprobe/state/health.json` on every state change
-- [ ] Track per-container: current state, total error count, timestamp of first error, timestamp of most recent error, most recent error message
-- [ ] Implement `errorprobe status` command: one line per watched container — name, functional state (`✓ OK` / `⚠ HAS ERRORS [N]`), infra state (from discovery metadata), last error message excerpt
-- [ ] Implement `errorprobe status --json` for machine-readable output
-- [ ] Implement `errorprobe watch` command: Bubbletea TUI, refreshes on state change events (not polling); columns: container, functional state, infra state, error count, last error time; keyboard: `[e]` expand errors for selected container, `[q]` quit
-- [ ] State reset: `errorprobe status --reset <container>` clears error state for a container (useful after acknowledging a known issue)
+- [x] Implement `ingest` package: transport interface `Ingest(batch []LogEvent)`; HTTP JSON implementation binding on `127.0.0.1:{ingest.port}` (default 9099)
+- [x] Implement `health` package: in-memory per-container state machine (`OK` → `HAS_ERRORS`); Tier 1 trigger: any inbound log event with `level = error` or `level = warn` flips container to `HAS_ERRORS`
+- [x] Persist health snapshot to `~/.errorprobe/state/health.json` on every state change
+- [x] Track per-container: current state, total error count, timestamp of first error, timestamp of most recent error, most recent error message
+- [x] Implement `errorprobe status` command: one line per watched container — name, functional state (`✓ OK` / `⚠ HAS ERRORS [N]`), infra state (from discovery metadata), last error message excerpt
+- [x] Implement `errorprobe status --json` for machine-readable output
+- [x] Implement `errorprobe watch` command: Bubbletea TUI, refreshes via `fsnotify` watch on `~/.errorprobe/state/health.json` (event-driven, not polling); columns: container, functional state, infra state, error count, last error time; keyboard: `[e]` expand errors for selected container, `[q]` quit
+- [x] State reset: `errorprobe status --reset <container>` clears error state for a container (useful after acknowledging a known issue)
 
 **Exit criterion:** Developer runs `errorprobe watch`. A watched container emits an error log line. Within 1–2 seconds, the TUI flips that container from `✓ OK` to `⚠ HAS ERRORS` and shows the error message. Both functional and infra state are visible in the same row.
 
@@ -203,7 +202,6 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 **Goal:** Zero-friction installation matching the zero-config runtime promise.
 
 ### Tasks
-
 - [ ] GitHub Actions: build Windows (amd64), Linux (amd64, arm64), macOS (arm64) binaries on tag push; upload as GitHub Release assets
 - [ ] Install script (`install.sh` / `install.ps1`): detect OS and arch, download correct binary from GitHub Releases, place in `$PATH` or prompt user
 - [ ] Checksums and signature verification in install script
