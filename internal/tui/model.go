@@ -129,6 +129,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = ""
 				}
 			}
+		case "o":
+			if m.grafanaBaseURL != "" {
+				url := m.grafanaBaseURL + "/d/errorprobe-overview"
+				if err := openBrowser(url); err != nil {
+					m.statusMsg = fmt.Sprintf("could not open browser: %v", err)
+				} else {
+					m.statusMsg = ""
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -270,9 +279,9 @@ func (m Model) renderHeader(n int) []string {
 	title := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n))
 	titleW := lipgloss.Width(title)
 
-	hintsAll := "[↑↓] navigate  [e] expand  [r] reset  [g] grafana  [q] quit"
+	hintsAll := "[↑↓] navigate  [e] expand  [r] reset  [g] grafana explore  [o] overview  [q] quit"
 	hintsA := "[↑↓] navigate  [e] expand  [r] reset"
-	hintsB := "[g] grafana  [q] quit"
+	hintsB := "[g] grafana explore  [o] overview  [q] quit"
 
 	w := m.width
 	if w <= 0 {

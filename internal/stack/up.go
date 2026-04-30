@@ -90,6 +90,9 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 	if err := configgen.GenerateGrafanaDatasource(cfg, configsDir); err != nil {
 		return fmt.Errorf("generating grafana datasource: %w", err)
 	}
+	if err := configgen.GenerateGrafanaDashboards(configsDir); err != nil {
+		return fmt.Errorf("generating grafana dashboards: %w", err)
+	}
 	if err := configgen.GenerateVector(cfg, configsDir, []string{}); err != nil {
 		return fmt.Errorf("generating vector config: %w", err)
 	}
@@ -137,6 +140,9 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 		Image: cfg.Stack.Grafana.Image,
 		Ports: []docker.PortBinding{
 			{HostPort: fmt.Sprintf("%d", cfg.Stack.Grafana.Port), ContainerPort: "3000"},
+		},
+		Env: []string{
+			"GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/errorprobe-overview.json",
 		},
 		Mounts: []docker.Mount{
 			{Source: grafanaProvisioningDir, Target: "/etc/grafana/provisioning", ReadOnly: true},

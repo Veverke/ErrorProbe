@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: ErrorProbe-Loki
+    uid: errorprobe-loki
     type: loki
     url: http://errorprobe-loki:{{.LokiPort}}
     access: proxy
