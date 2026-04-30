@@ -7,6 +7,32 @@
 
 ---
 
+## Known Issues Carried from Phase 4
+
+### `status --reset` is overwritten immediately while `up` is running
+
+**Observed during Phase 4 manual testing (2026-04-30).**
+
+`errorprobe status --reset <container>` writes the cleared state directly to
+`~/.errorprobe/state/health.json` on disk. However, the health engine running
+inside `errorprobe up` maintains its own in-memory state and continuously
+overwrites that file as new log events arrive. If the container is still
+emitting errors, the reset is immediately overridden — within milliseconds —
+and the next `status` read shows `HAS_ERRORS` again.
+
+**Expected behaviour (V1):** Reset is intentionally advisory — it acknowledges
+a known issue for the current snapshot. It works correctly when `up` is not
+running (e.g., CI scripts that read a past snapshot offline). The live override
+is by design in V1.
+
+**Correct fix target (Phase 6 or later):** Add an IPC mechanism (e.g., a Unix
+socket or named pipe command channel) so `status --reset` sends the reset
+directly to the running engine's in-memory state rather than patching the file.
+Until then, document clearly in `errorprobe status --help` that reset takes
+effect permanently only when the engine is not running.
+
+---
+
 ## Atomic Tasks
 
 Tasks are grouped by dependency tier. All tasks within a tier can be implemented independently and in parallel.

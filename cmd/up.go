@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,13 +53,7 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
-		// Start health engine (loads persisted state if present).
-		snapshotPath := cfg.StateDir() + "health.json"
-		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
-			// onChange: snapshot persisted; nothing extra needed in foreground mode.
-		})
-
-		// Start ingest HTTP transport wired to the engine.
+		// Quick initial container discovery to get the count for the ready banner.
 		bind := cfg.Stack.Ingest.Bind
 		if bind == "" {
 			bind = "127.0.0.1"
@@ -67,8 +62,20 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		if port == 0 {
 			port = 9099
 		}
-		addr := bind + ":" + strconv.Itoa(port)
-		transport := ingest.NewHTTPTransport(addr)
+		ingestAddr := bind + ":" + strconv.Itoa(port)
+
+		containers, _ := discovery.ListRunning(ctx, cli)
+		watched := discovery.ApplyPolicy(containers, cfg)
+		printReadyBanner(cfg, len(watched), ingestAddr)
+
+		// Start health engine (loads persisted state if present).
+		snapshotPath := cfg.StateDir() + "health.json"
+		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
+			// onChange: snapshot persisted; nothing extra needed in foreground mode.
+		})
+
+		// Start ingest HTTP transport wired to the engine.
+		transport := ingest.NewHTTPTransport(ingestAddr)
 		transport.OnBatch(engine.ProcessBatch)
 
 		go func() {
@@ -76,7 +83,6 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 				onStatus(fmt.Sprintf("ingest transport stopped: %v", err))
 			}
 		}()
-		onStatus(fmt.Sprintf("ingest listening on %s", addr))
 
 		gen := configgen.DefaultGenerator{}
 		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {
@@ -89,7 +95,24 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		// skip regeneration if the container set hasn't changed since last run.
 		_ = os.Remove(cfg.StateDir() + "containers.json")
 
-		onStatus("watching for container changes… (press CTRL+C to stop)")
 		return reconciler.Run(ctx)
 	},
 }
+
+const bannerRule = "─────────────────────────────────────────────"
+
+func printReadyBanner(cfg *config.Config, watchCount int, ingestAddr string) {
+	lines := []string{
+		"ErrorProbe ready",
+		bannerRule,
+		fmt.Sprintf("Watching %d containers", watchCount),
+		fmt.Sprintf("Grafana:   http://localhost:%d", cfg.Stack.Grafana.Port),
+		fmt.Sprintf("Loki:      http://localhost:%d", cfg.Stack.Loki.Port),
+		fmt.Sprintf("Ingest:    http://%s", ingestAddr),
+		bannerRule,
+		"Run 'errorprobe watch' to monitor in real-time",
+		"Run 'errorprobe check' to use in CI/scripts",
+	}
+	fmt.Println(strings.Join(lines, "\n"))
+}
+

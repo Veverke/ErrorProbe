@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/health"
+	"github.com/errorprobe/errorprobe/internal/links"
 )
 
 // refreshMsg triggers a snapshot reload from disk.
@@ -39,17 +42,18 @@ const ekgTileWidth = 40
 
 // Model is the Bubbletea model for the watch TUI.
 type Model struct {
-	snap         health.HealthSnapshot
-	ws           discovery.WatchSet
-	snapshotPath string
-	watchSetPath string
-	cursor       int
-	expanded     bool
-	width        int
-	height       int
-	quitting     bool
-	ekgOffset    int
-	statusMsg    string
+	snap           health.HealthSnapshot
+	ws             discovery.WatchSet
+	snapshotPath   string
+	watchSetPath   string
+	grafanaBaseURL string
+	cursor         int
+	expanded       bool
+	width          int
+	height         int
+	quitting       bool
+	ekgOffset      int
+	statusMsg      string
 }
 
 var (
@@ -63,13 +67,15 @@ var (
 )
 
 // NewModel creates a TUI model. The model polls snapshotPath and watchSetPath
-// every second for live updates.
-func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws discovery.WatchSet) Model {
+// every second for live updates. grafanaBaseURL is used to build Explore deep
+// links when the user presses [g].
+func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws discovery.WatchSet, grafanaBaseURL string) Model {
 	return Model{
-		snap:         snap,
-		ws:           ws,
-		snapshotPath: snapshotPath,
-		watchSetPath: watchSetPath,
+		snap:           snap,
+		ws:             ws,
+		snapshotPath:   snapshotPath,
+		watchSetPath:   watchSetPath,
+		grafanaBaseURL: grafanaBaseURL,
 	}
 }
 
@@ -107,6 +113,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 m.snap.Reset(name)
 				if err := health.SaveSnapshot(m.snapshotPath, m.snap); err != nil {
 					m.statusMsg = fmt.Sprintf("error saving snapshot: %v", err)
+				} else {
+					m.statusMsg = ""
+				}
+			}
+		case "g":
+			rows := m.sortedNames()
+			if m.cursor < len(rows) && m.grafanaBaseURL != "" {
+				name := rows[m.cursor]
+				url := links.BuildExploreURL(m.grafanaBaseURL, name, time.Time{}, time.Time{})
+				if err := openBrowser(url); err != nil {
+					m.statusMsg = fmt.Sprintf("could not open browser: %v", err)
 				} else {
 					m.statusMsg = ""
 				}
@@ -156,7 +173,7 @@ func (m Model) View() string {
 	}
 
 	header := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n)) +
-		"          " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [q] quit")
+		"          " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [g] grafana  [q] quit")
 
 	// EKG color reflects overall health: green = all OK, yellow = has errors.
 	hasErrors := false
@@ -296,4 +313,19 @@ func repeat(s string, n int) string {
 		out += s
 	}
 	return out
+}
+
+// openBrowser opens url in the system default browser.
+// On Windows it uses "cmd /c start <url>"; on macOS "open"; on Linux "xdg-open".
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Start()
 }

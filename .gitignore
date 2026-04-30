@@ -10,6 +10,8 @@ vendor/
 *.exe
 *.out
 *.test
+cover
+cover_*
 coverage
 
 # IDE
