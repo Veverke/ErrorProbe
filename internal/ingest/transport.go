@@ -15,6 +15,8 @@ type Transport interface {
 
 	// OnBatch registers the handler called for each received batch of log
 	// events. The handler is called synchronously (no internal queue in V1).
-	// Calling OnBatch after Start is a no-op for the current in-flight request.
+	// Calling OnBatch after Start may or may not affect in-flight requests;
+	// no ordering guarantee is provided. Callers should register the handler
+	// before calling Start to ensure consistent behavior.
 	OnBatch(handler func([]LogEvent))
 }

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -87,8 +88,13 @@ func (t *HTTPTransport) handleIngest(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		// MaxBytesReader returns an error with "http: request body too large"
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			logger.Error("ingest: failed to read request body", "error", err)
+			http.Error(w, "failed to read request body", http.StatusInternalServerError)
+		}
 		return
 	}
 

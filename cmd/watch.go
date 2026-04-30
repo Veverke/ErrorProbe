@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lipgloss "github.com/charmbracelet/lipgloss"
@@ -29,11 +28,8 @@ for all watched containers in real time, updating as new log events arrive.`,
 		snapshotPath := cfg.StateDir() + "health.json"
 		watchSetPath := cfg.StateDir() + "containers.json"
 
-		// Require the stack to be running: health.json must exist.
-		if _, err := os.Stat(snapshotPath); os.IsNotExist(err) {
-			return fmt.Errorf("health snapshot not found — is `errorprobe up` running?\nExpected: %s", snapshotPath)
-		}
-
+		// Use LoadSnapshot which treats a missing file as an empty snapshot,
+		// so `watch` works on a fresh run before the first state change is persisted.
 		snap, err := health.LoadSnapshot(snapshotPath)
 		if err != nil {
 			return fmt.Errorf("loading health snapshot: %w", err)

@@ -5,8 +5,7 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
+tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/errorprobe/errorprobe/internal/discovery"
@@ -50,6 +49,7 @@ type Model struct {
 	height       int
 	quitting     bool
 	ekgOffset    int
+	statusMsg    string
 }
 
 var (
@@ -59,6 +59,7 @@ var (
 	borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	selectedBg  = lipgloss.NewStyle().Background(lipgloss.Color("237"))
+	statusErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 // NewModel creates a TUI model. The model polls snapshotPath and watchSetPath
@@ -103,8 +104,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rows := m.sortedNames()
 			if m.cursor < len(rows) {
 				name := rows[m.cursor]
-				m.snap.Reset(name)
-				_ = health.SaveSnapshot(m.snapshotPath, m.snap)
+m.snap.Reset(name)
+				if err := health.SaveSnapshot(m.snapshotPath, m.snap); err != nil {
+					m.statusMsg = fmt.Sprintf("error saving snapshot: %v", err)
+				} else {
+					m.statusMsg = ""
+				}
 			}
 		}
 
@@ -168,18 +173,32 @@ func (m Model) View() string {
 	ekgSty := lipgloss.NewStyle().Foreground(ekgColor)
 	ekgRows := m.renderEKG(m.width)
 
-	sep := borderStyle.Render("─")
-	colFmt := "%-22s  %-20s  %-12s  %-22s"
-	colHeader := fmt.Sprintf(colFmt, "CONTAINER", "FUNCTIONAL", "INFRA", "LAST ERROR")
+	col1W, col2W, col3W, col4W := 22, 20, 12, 22
+
+	padRight := func(s string, w int) string {
+		vis := lipgloss.Width(s)
+		if vis >= w {
+			return s
+		}
+		return s + strings.Repeat(" ", w-vis)
+	}
+
+	colHeader := padRight("CONTAINER", col1W) + "  " +
+		padRight("FUNCTIONAL", col2W) + "  " +
+		padRight("INFRA", col3W) + "  " +
+		padRight("LAST ERROR", col4W)
 
 	rows := make([]string, 0, len(names)+6)
 	rows = append(rows, header)
+	if m.statusMsg != "" {
+		rows = append(rows, statusErrStyle.Render("⚠ "+m.statusMsg))
+	}
 	for _, row := range ekgRows {
 		rows = append(rows, ekgSty.Render(row))
 	}
 	rows = append(rows, borderStyle.Render(repeat("─", 82)))
 	rows = append(rows, colHeader)
-	rows = append(rows, borderStyle.Render(repeat(sep, 82)))
+	rows = append(rows, borderStyle.Render(repeat("─", 82)))
 
 	for i, name := range names {
 		ch := m.snap.Containers[name]
@@ -188,22 +207,29 @@ func (m Model) View() string {
 			infra = "unknown"
 		}
 
-		var funcCell string
+		var funcText string
+		var funcStyled string
 		var lastErr string
 		switch ch.State {
 		case health.StateHasErrors:
-			funcCell = errStyle.Render(fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount))
+			funcText = fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount)
+			funcStyled = errStyle.Render(funcText)
 			if ch.LastErrorAt != nil {
 				lastErr = ch.LastErrorAt.Format("15:04") + " " + truncateRune(ch.LastErrorMsg, 16)
 			} else {
 				lastErr = "—"
 			}
 		default:
-			funcCell = okStyle.Render("✓ OK")
+			funcText = "✓ OK"
+			funcStyled = okStyle.Render(funcText)
 			lastErr = "—"
 		}
 
-		line := fmt.Sprintf("%-22s  %-20s  %-12s  %-22s", name, funcCell, infra, lastErr)
+		line := padRight(name, col1W) + "  " +
+			padRight(funcStyled, col2W+len(funcStyled)-len(funcText)) + "  " +
+			padRight(infra, col3W) + "  " +
+			padRight(lastErr, col4W)
+
 		if i == m.cursor {
 			line = selectedBg.Render(line)
 		}

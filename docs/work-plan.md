@@ -3,7 +3,6 @@
 ---
 
 ## Overview
-
 This document defines the implementation phases to transform the intent defined in `intent.md` into a working solution, following the architecture defined in `architecture.md`.
 
 Each phase has a clear goal, a definition of done, and an ordered task list. Tasks within a phase are ordered by dependency — each task assumes the previous ones are complete.
@@ -103,7 +102,7 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 - [x] Track per-container: current state, total error count, timestamp of first error, timestamp of most recent error, most recent error message
 - [x] Implement `errorprobe status` command: one line per watched container — name, functional state (`✓ OK` / `⚠ HAS ERRORS [N]`), infra state (from discovery metadata), last error message excerpt
 - [x] Implement `errorprobe status --json` for machine-readable output
-- [x] Implement `errorprobe watch` command: Bubbletea TUI, refreshes on state change events (not polling); columns: container, functional state, infra state, error count, last error time; keyboard: `[e]` expand errors for selected container, `[q]` quit
+- [x] Implement `errorprobe watch` command: Bubbletea TUI, refreshes via `fsnotify` watch on `~/.errorprobe/state/health.json` (event-driven, not polling); columns: container, functional state, infra state, error count, last error time; keyboard: `[e]` expand errors for selected container, `[q]` quit
 - [x] State reset: `errorprobe status --reset <container>` clears error state for a container (useful after acknowledging a known issue)
 
 **Exit criterion:** Developer runs `errorprobe watch`. A watched container emits an error log line. Within 1–2 seconds, the TUI flips that container from `✓ OK` to `⚠ HAS ERRORS` and shows the error message. Both functional and infra state are visible in the same row.
@@ -203,7 +202,6 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 **Goal:** Zero-friction installation matching the zero-config runtime promise.
 
 ### Tasks
-
 - [ ] GitHub Actions: build Windows (amd64), Linux (amd64, arm64), macOS (arm64) binaries on tag push; upload as GitHub Release assets
 - [ ] Install script (`install.sh` / `install.ps1`): detect OS and arch, download correct binary from GitHub Releases, place in `$PATH` or prompt user
 - [ ] Checksums and signature verification in install script

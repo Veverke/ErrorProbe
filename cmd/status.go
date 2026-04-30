@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -38,6 +40,7 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 		// Handle --reset flag: modify persisted snapshot directly, no IPC needed.
 		if statusReset != "" {
 			snap.Reset(statusReset)
+			snap.SnapshotAt = time.Now()
 			if err := health.SaveSnapshot(snapshotPath, snap); err != nil {
 				return fmt.Errorf("saving health snapshot after reset: %w", err)
 			}
@@ -67,18 +70,24 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 		}
 
 		// Build the full container list: union of health snapshot + watch set.
-		names := make(map[string]struct{})
+		namesSet := make(map[string]struct{})
 		for n := range snap.Containers {
-			names[n] = struct{}{}
+			namesSet[n] = struct{}{}
 		}
 		for _, c := range ws.Containers {
-			names[c.Name] = struct{}{}
+			namesSet[c.Name] = struct{}{}
 		}
+
+		names := make([]string, 0, len(namesSet))
+		for n := range namesSet {
+			names = append(names, n)
+		}
+		sort.Strings(names)
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "CONTAINER\tFUNCTIONAL\tINFRA\tERRORS\tLAST ERROR")
 
-		for name := range names {
+		for _, name := range names {
 			ch := snap.Containers[name]
 			funcState := formatFunctionalState(ch)
 			infra := infraState[name]

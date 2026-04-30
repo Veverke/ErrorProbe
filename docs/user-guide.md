@@ -90,8 +90,8 @@ errorprobe down --purge
 | `errorprobe up` | Implemented | Start the observability stack and enter the reconciliation loop |
 | `errorprobe down` | Implemented | Stop and remove stack containers |
 | `errorprobe list` | Implemented | List containers and their watch status |
-| `errorprobe status` | Planned | Show health state per container (OK / HAS_ERRORS / FAILING) |
-| `errorprobe watch` | Planned | Interactive real-time terminal UI |
+| `errorprobe status` | Implemented | Show health state per container (OK / HAS_ERRORS / FAILING) |
+| `errorprobe watch` | Implemented | Interactive real-time terminal UI |
 | `errorprobe logs <container>` | Planned | Stream logs for a container from Loki |
 | `errorprobe check` | Planned | Exit non-zero if any container exceeds the fail threshold — for CI use |
 | `errorprobe update` | Planned | Pull latest pinned images and restart the stack |
@@ -189,7 +189,7 @@ The reconciler is the loop that runs inside `errorprobe up`. On every tick it:
 1. Queries the Docker API for running containers
 2. Applies the watch policy (exclusions, label filters)
 3. Compares the result to the previously persisted watch set
-4. If anything changed: regenerates `vector.toml`, sends a reload signal (SIGHUP) to Vector, and saves the new watch set to `~/.errorprobe/state/containers.json`
+4. If anything changed: regenerates `vector.toml`, saves the new watch set to `~/.errorprobe/state/containers.json`, then sends a reload signal (SIGHUP) to Vector if Vector is running
 
 This means Vector's configuration is always in sync with what is actually running — containers started or stopped after `errorprobe up` are picked up automatically, without a restart.
 

@@ -32,13 +32,19 @@ func newStartedTransport(t *testing.T) (*HTTPTransport, context.CancelFunc, stri
 	ctx, cancel := context.WithCancel(context.Background())
 	go tr.Start(ctx) //nolint:errcheck
 	// Wait until the server is ready to accept connections.
+	connected := false
 	for i := 0; i < 50; i++ {
 		conn, err := net.Dial("tcp", addr)
 		if err == nil {
 			conn.Close()
+			connected = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !connected {
+		cancel()
+		t.Fatal("server never became reachable within the retry window")
 	}
 	return tr, cancel, addr
 }
@@ -139,7 +145,6 @@ func TestHTTPTransport_GracefulShutdown(t *testing.T) {
 
 	// Cancel the context (triggers Stop).
 	cancel()
-
 	select {
 	case err := <-done:
 		assert.NoError(t, err)

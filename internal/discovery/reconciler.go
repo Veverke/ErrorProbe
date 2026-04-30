@@ -122,17 +122,11 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		if err := r.docker.SendSignal(ctx, "errorprobe-vector", "SIGHUP"); err != nil {
 			logger.Error("sending SIGHUP to vector", "err", err)
 		} else {
-			// 7. Notify caller only when reload actually succeeded.
 			logger.Info("vector config reloaded", "watching", len(approved))
-			if r.onReload != nil {
-				r.onReload()
-			}
 		}
-		return nil
 	}
 
-	// Config updated but Vector wasn't reloaded — still notify so the user
-	// knows the watch set changed.
+	// 7. Notify caller whenever the watch set changed, regardless of SIGHUP outcome.
 	if r.onReload != nil {
 		r.onReload()
 	}

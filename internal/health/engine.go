@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/errorprobe/errorprobe/internal/ingest"
+	"github.com/errorprobe/errorprobe/internal/logger"
 )
 
 // Engine maintains the current HealthSnapshot, processes incoming log batches,
@@ -29,6 +30,10 @@ func NewEngine(snapshotPath string, onChange func(HealthSnapshot)) *Engine {
 
 	if snap, err := LoadSnapshot(snapshotPath); err == nil {
 		e.snapshot = snap
+	}
+
+	if e.snapshot.Containers == nil {
+		e.snapshot.Containers = make(map[string]ContainerHealth)
 	}
 
 	return e
@@ -60,7 +65,7 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 		snap := e.snapshot
 		if err := SaveSnapshot(e.snapshotPath, snap); err != nil {
 			// Log but do not crash; state is still in memory.
-			_ = fmt.Errorf("health engine: persist snapshot: %w", err)
+			logger.Errorf("health engine: persist snapshot: %v", err)
 		}
 		if e.onChange != nil {
 			e.onChange(snap)
