@@ -65,7 +65,7 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 		snap := e.snapshot
 		if err := SaveSnapshot(e.snapshotPath, snap); err != nil {
 			// Log but do not crash; state is still in memory.
-			logger.Errorf("health engine: persist snapshot: %v", err)
+			logger.Error("health engine: persist snapshot", "err", err)
 		}
 		if e.onChange != nil {
 			e.onChange(snap)
