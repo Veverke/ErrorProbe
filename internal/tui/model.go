@@ -2,14 +2,18 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
-tea "github.com/charmbracelet/bubbletea"
+
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/health"
+	"github.com/errorprobe/errorprobe/internal/links"
 )
 
 // refreshMsg triggers a snapshot reload from disk.
@@ -39,37 +43,40 @@ const ekgTileWidth = 40
 
 // Model is the Bubbletea model for the watch TUI.
 type Model struct {
-	snap         health.HealthSnapshot
-	ws           discovery.WatchSet
-	snapshotPath string
-	watchSetPath string
-	cursor       int
-	expanded     bool
-	width        int
-	height       int
-	quitting     bool
-	ekgOffset    int
-	statusMsg    string
+	snap           health.HealthSnapshot
+	ws             discovery.WatchSet
+	snapshotPath   string
+	watchSetPath   string
+	grafanaBaseURL string
+	cursor         int
+	expanded       bool
+	width          int
+	height         int
+	quitting       bool
+	ekgOffset      int
+	statusMsg      string
 }
 
 var (
-	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	selectedBg  = lipgloss.NewStyle().Background(lipgloss.Color("237"))
+	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	okStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	borderStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	selectedBg     = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 	statusErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 // NewModel creates a TUI model. The model polls snapshotPath and watchSetPath
-// every second for live updates.
-func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws discovery.WatchSet) Model {
+// every second for live updates. grafanaBaseURL is used to build Explore deep
+// links when the user presses [g].
+func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws discovery.WatchSet, grafanaBaseURL string) Model {
 	return Model{
-		snap:         snap,
-		ws:           ws,
-		snapshotPath: snapshotPath,
-		watchSetPath: watchSetPath,
+		snap:           snap,
+		ws:             ws,
+		snapshotPath:   snapshotPath,
+		watchSetPath:   watchSetPath,
+		grafanaBaseURL: grafanaBaseURL,
 	}
 }
 
@@ -104,9 +111,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rows := m.sortedNames()
 			if m.cursor < len(rows) {
 				name := rows[m.cursor]
-m.snap.Reset(name)
+				m.snap.Reset(name)
 				if err := health.SaveSnapshot(m.snapshotPath, m.snap); err != nil {
 					m.statusMsg = fmt.Sprintf("error saving snapshot: %v", err)
+				} else {
+					m.statusMsg = ""
+				}
+			}
+		case "g":
+			rows := m.sortedNames()
+			if m.cursor < len(rows) && m.grafanaBaseURL != "" {
+				name := rows[m.cursor]
+				url := links.BuildExploreURL(m.grafanaBaseURL, name, time.Time{}, time.Time{})
+				if err := openBrowser(url); err != nil {
+					m.statusMsg = fmt.Sprintf("could not open browser: %v", err)
+				} else {
+					m.statusMsg = ""
+				}
+			}
+		case "o":
+			if m.grafanaBaseURL != "" {
+				url := m.grafanaBaseURL + "/d/errorprobe-overview"
+				if err := openBrowser(url); err != nil {
+					m.statusMsg = fmt.Sprintf("could not open browser: %v", err)
 				} else {
 					m.statusMsg = ""
 				}
@@ -155,8 +182,7 @@ func (m Model) View() string {
 		infraState[c.Name] = c.InfraStatus
 	}
 
-	header := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n)) +
-		"          " + dimStyle.Render("[↑↓] navigate  [e] expand  [r] reset  [q] quit")
+	header := m.renderHeader(n)
 
 	// EKG color reflects overall health: green = all OK, yellow = has errors.
 	hasErrors := false
@@ -189,7 +215,9 @@ func (m Model) View() string {
 		padRight("LAST ERROR", col4W)
 
 	rows := make([]string, 0, len(names)+6)
-	rows = append(rows, header)
+	for _, h := range header {
+		rows = append(rows, h)
+	}
 	if m.statusMsg != "" {
 		rows = append(rows, statusErrStyle.Render("⚠ "+m.statusMsg))
 	}
@@ -244,6 +272,34 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// renderHeader returns 1 or 2 lines depending on terminal width.
+// The hint keys are split across two lines when the terminal is too narrow
+// to fit them all on one line beside the title.
+func (m Model) renderHeader(n int) []string {
+	title := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n))
+	titleW := lipgloss.Width(title)
+
+	hintsAll := "[↑↓] navigate  [e] expand  [r] reset  [g] grafana explore  [o] overview  [q] quit"
+	hintsA := "[↑↓] navigate  [e] expand  [r] reset"
+	hintsB := "[g] grafana explore  [o] overview  [q] quit"
+
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+
+	// Try single line: title + 2 spaces + full hint.
+	if titleW+2+len(hintsAll) <= w {
+		return []string{title + "  " + dimStyle.Render(hintsAll)}
+	}
+
+	// Two-line fallback.
+	return []string{
+		title + "  " + dimStyle.Render(hintsA),
+		strings.Repeat(" ", titleW+2) + dimStyle.Render(hintsB),
+	}
+}
+
 // sortedNames returns a deterministically ordered list of all container names
 // from both the health snapshot and the watch set.
 func (m Model) sortedNames() []string {
@@ -296,4 +352,25 @@ func repeat(s string, n int) string {
 		out += s
 	}
 	return out
+}
+
+// openBrowser opens url in the system default browser.
+// On Windows it uses "cmd /c start <url>"; on macOS "open"; on Linux "xdg-open".
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if cmd.Process != nil {
+		return cmd.Process.Release()
+	}
+	return nil
 }

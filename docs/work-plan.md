@@ -109,21 +109,22 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 4 — Developer UX & CI Integration
+## Phase 4 — Developer UX & CI Integration *(completed 2026-04-30)*
 
 **Goal:** Complete the V1 success criterion — hours of debugging → 5 seconds. Composable with test scripts.
 
 ### Tasks
 
-- [ ] Implement `errorprobe check` command: reads current health snapshot from `~/.errorprobe/state/health.json`; exits 0 if all watched containers satisfy `check.fail_on` threshold; exits 1 otherwise; requires stack to be running (fails with clear message if not)
-- [ ] `check.fail_on` respected: `HAS_ERRORS` (any error triggers failure) vs `FAILING` (only confirmed Tier 2 patterns — Tier 2 is V2, so `FAILING` state is not reachable in V1; document this clearly)
-- [ ] `check.exclude` respected: listed containers exempt from exit code evaluation
-- [ ] Implement `errorprobe logs <container>` command: stream log lines from Loki for a given container via LogQL; real-time tail
-- [ ] Implement `errorprobe logs <container> --errors-only`: stream only `level=error` lines
-- [ ] Grafana deep-link: `errorprobe status` and `errorprobe watch` both print/display the Grafana Explore URL pre-filtered to the selected container and current time range
-- [ ] Startup output polish: on `errorprobe up` completion, print discovered container count, stack URLs, and hint to run `errorprobe watch`
-- [ ] Implement `errorprobe reload` command: re-read `errorprobe.yaml`, classify changed fields as soft (severity patterns, thresholds, exclusions) or hard (ports, images, bind address); apply soft changes via Vector config regeneration + SIGHUP; apply hard changes via targeted container recreation; print summary of what was soft-applied vs recreated
-- [ ] Integration test (manual): deploy a known-broken container, run `errorprobe up`, run `errorprobe check`, assert non-zero exit and correct container identified
+- [x] Implement `errorprobe check` command: reads current health snapshot from `~/.errorprobe/state/health.json`; exits 0 if all watched containers satisfy `check.fail_on` threshold; exits 1 otherwise; requires stack to be running (fails with clear message if not)
+- [x] `check.fail_on` respected: `HAS_ERRORS` (any error triggers failure) vs `FAILING` (only confirmed Tier 2 patterns — Tier 2 is V2, so `FAILING` state is not reachable in V1; document this clearly)
+- [x] `check.exclude` respected: listed containers exempt from exit code evaluation
+- [x] Implement `errorprobe logs <container>` command: stream log lines from Loki for a given container via LogQL; real-time tail
+- [x] Implement `errorprobe logs <container> --errors-only`: stream only `level=error` lines
+- [x] Grafana deep-link: `errorprobe status` and `errorprobe watch` both print/display the Grafana Explore URL pre-filtered to the selected container and current time range
+- [x] Startup output polish: on `errorprobe up` completion, print discovered container count, stack URLs, and hint to run `errorprobe watch`
+- [x] Implement `errorprobe reload` command: re-read `errorprobe.yaml`, classify changed fields as soft (severity patterns, thresholds, exclusions) or hard (ports, images, bind address); apply soft changes via Vector config regeneration + SIGHUP; apply hard changes via targeted container recreation; print summary of what was soft-applied vs recreated
+- [x] Integration test (manual): deploy a known-broken container, run `errorprobe up`, run `errorprobe check`, assert non-zero exit and correct container identified
+- [x] Fixed known issue from Phase 3: idempotency check now runs before port availability check in `stack.Up`
 
 **Exit criterion:** A new developer clones a repo, runs `errorprobe up`, deploys N containers (one of which is emitting errors), runs `errorprobe check` → exits 1. Runs `errorprobe status` → sees exactly which container is broken and the first error message. Zero prior configuration required. Total time from `errorprobe up` to answer: under 10 seconds.
 

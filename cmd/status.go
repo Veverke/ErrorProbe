@@ -13,6 +13,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/health"
+	"github.com/errorprobe/errorprobe/internal/links"
 )
 
 var (
@@ -104,7 +105,19 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, funcState, infra, errors, lastErr)
 		}
-		return w.Flush()
+		if err := w.Flush(); err != nil {
+			return err
+		}
+
+		// Print Grafana Explore deep links for every container.
+		grafanaBase := fmt.Sprintf("http://localhost:%d", cfg.Stack.Grafana.Port)
+		fmt.Println()
+		fmt.Println("Grafana Explore:")
+		for _, name := range names {
+			url := links.BuildExploreURL(grafanaBase, name, time.Time{}, time.Time{})
+			fmt.Printf("  %-30s %s\n", name, url)
+		}
+		return nil
 	},
 }
 

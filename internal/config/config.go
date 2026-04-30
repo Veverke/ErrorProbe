@@ -22,7 +22,7 @@ type Config struct {
 type Stack struct {
 	Vector  VectorConfig  `mapstructure:"vector"`
 	Loki    LokiConfig    `mapstructure:"loki"`
-Grafana GrafanaConfig `mapstructure:"grafana"`
+	Grafana GrafanaConfig `mapstructure:"grafana"`
 	Ingest  IngestConfig  `mapstructure:"ingest"`
 }
 
@@ -71,6 +71,12 @@ type Containers struct {
 type Check struct {
 	FailOn  string   `mapstructure:"fail_on"`
 	Exclude []string `mapstructure:"exclude"`
+}
+
+// DataDir returns the root ~/.errorprobe/ directory that holds all
+// errorprobe-managed data (configs, state, logs).
+func (c *Config) DataDir() string {
+	return filepath.Join(homeDir(), ".errorprobe") + string(filepath.Separator)
 }
 
 // StateDir returns the path to the state directory.
@@ -135,6 +141,10 @@ func Load(projectDir string) (*Config, error) {
 
 	if cfg.Version != 1 {
 		return nil, fmt.Errorf("unsupported version %d: only version 1 is supported", cfg.Version)
+	}
+
+	if cfg.Check.FailOn != "" && cfg.Check.FailOn != "HAS_ERRORS" && cfg.Check.FailOn != "FAILING" {
+		return nil, fmt.Errorf("invalid check.fail_on %q: must be HAS_ERRORS or FAILING", cfg.Check.FailOn)
 	}
 
 	return &cfg, nil

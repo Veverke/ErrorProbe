@@ -40,13 +40,8 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 		return err
 	}
 
-	// 2. Check port conflicts before pulling images (fail fast).
-	onStatus("checking port availability…")
-	if err := CheckPorts(cfg); err != nil {
-		return err
-	}
-
-	// 3. Idempotency: if all three containers are running, nothing to do.
+	// 2. Idempotency: if all three containers are already running, skip
+	// port checks and image pulls — nothing to do.
 	allRunning := true
 	for _, name := range []string{ContainerLoki, ContainerGrafana, ContainerVector} {
 		running, err := cli.ContainerRunning(ctx, name)
@@ -57,10 +52,18 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 			allRunning = false
 			break
 		}
-}
+	}
 	if allRunning {
 		onStatus("stack already running — use 'errorprobe down' to stop it")
 		return nil
+	}
+
+	// 3. Check port conflicts before pulling images (fail fast).
+	// Skipped above when the stack is already running (those containers
+	// legitimately hold the ports).
+	onStatus("checking port availability…")
+	if err := CheckPorts(cfg); err != nil {
+		return err
 	}
 
 	// 4. Pull images.
@@ -86,6 +89,9 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 	}
 	if err := configgen.GenerateGrafanaDatasource(cfg, configsDir); err != nil {
 		return fmt.Errorf("generating grafana datasource: %w", err)
+	}
+	if err := configgen.GenerateGrafanaDashboards(configsDir); err != nil {
+		return fmt.Errorf("generating grafana dashboards: %w", err)
 	}
 	if err := configgen.GenerateVector(cfg, configsDir, []string{}); err != nil {
 		return fmt.Errorf("generating vector config: %w", err)
@@ -134,6 +140,9 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 		Image: cfg.Stack.Grafana.Image,
 		Ports: []docker.PortBinding{
 			{HostPort: fmt.Sprintf("%d", cfg.Stack.Grafana.Port), ContainerPort: "3000"},
+		},
+		Env: []string{
+			"GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/errorprobe-overview.json",
 		},
 		Mounts: []docker.Mount{
 			{Source: grafanaProvisioningDir, Target: "/etc/grafana/provisioning", ReadOnly: true},

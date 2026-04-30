@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -13,7 +14,10 @@ import (
 	"github.com/errorprobe/errorprobe/internal/docker"
 )
 
-var listJSONFlag bool
+var (
+	listJSONFlag    bool
+	listDetailsFlag bool
+)
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -51,6 +55,10 @@ errorprobe.yaml, showing their names, images, infra status, and watch status.`,
 			watched[c.ID] = true
 		}
 
+		if listDetailsFlag {
+			return printListDetails(approved, watched)
+		}
+
 		if listJSONFlag {
 			type jsonContainer struct {
 				discovery.ContainerMeta
@@ -78,6 +86,67 @@ errorprobe.yaml, showing their names, images, infra status, and watch status.`,
 	},
 }
 
+// printListDetails prints the container → image → volume breakdown.
+func printListDetails(containers []discovery.ContainerMeta, watched map[string]bool) error {
+	const indent = "  "
+	const rule = "────────────────────────────────────────────────────"
+
+	for i, c := range containers {
+		watchMark := "watching"
+		if !watched[c.ID] {
+			watchMark = "not watching"
+		}
+		fmt.Printf("%s  [%s]\n", c.Name, watchMark)
+		fmt.Printf("%simage:   %s\n", indent, c.Image)
+		fmt.Printf("%sstatus:  %s\n", indent, c.InfraStatus)
+
+		if len(c.Mounts) == 0 {
+			fmt.Printf("%svolumes: (none)\n", indent)
+		} else {
+			fmt.Printf("%svolumes:\n", indent)
+			for _, m := range c.Mounts {
+				fmt.Printf("%s%s  %s\n", indent+indent, mountLabel(m), mountArrow(m))
+			}
+		}
+
+		if i < len(containers)-1 {
+			fmt.Println(rule)
+		}
+	}
+	return nil
+}
+
+// mountLabel returns the human-readable type tag for a mount.
+func mountLabel(m discovery.MountInfo) string {
+	switch m.Type {
+	case "volume":
+		if m.Name != "" {
+			return fmt.Sprintf("[volume: %s]", m.Name)
+		}
+		return "[volume: anonymous]"
+	case "bind":
+		return "[bind]"
+	case "tmpfs":
+		return "[tmpfs]"
+	default:
+		return fmt.Sprintf("[%s]", m.Type)
+	}
+}
+
+// mountArrow returns the "source → destination (ro/rw)" string for a mount.
+func mountArrow(m discovery.MountInfo) string {
+	src := m.Source
+	if src == "" {
+		src = "(managed by docker)"
+	}
+	rw := "rw"
+	if m.ReadOnly {
+		rw = "ro"
+	}
+	return strings.Join([]string{src, "→", m.Destination}, " ") + "  (" + rw + ")"
+}
+
 func init() {
 	listCmd.Flags().BoolVar(&listJSONFlag, "json", false, "output as JSON array")
+	listCmd.Flags().BoolVar(&listDetailsFlag, "details", false, "show image and volume breakdown per container")
 }

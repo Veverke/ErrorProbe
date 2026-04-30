@@ -1,0 +1,6 @@
+version: 1
+
+check:
+  fail_on: HAS_ERRORS
+  exclude:
+    - broken-app

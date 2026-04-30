@@ -44,7 +44,8 @@ for all watched containers in real time, updating as new log events arrive.`,
 		// which fails the isatty check and causes lipgloss to auto-detect NoTTY.
 		lipgloss.SetColorProfile(termenv.TrueColor)
 
-		model := tui.NewModel(snapshotPath, watchSetPath, snap, ws)
+		grafanaBaseURL := fmt.Sprintf("http://localhost:%d", cfg.Stack.Grafana.Port)
+		model := tui.NewModel(snapshotPath, watchSetPath, snap, ws, grafanaBaseURL)
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("watch TUI: %w", err)

@@ -5,8 +5,8 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,6 +16,8 @@ import (
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/ingest"
+	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pid"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
@@ -35,7 +37,7 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		}
 
 		onStatus := func(msg string) {
-			fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), msg)
+			logger.Info(msg)
 		}
 
 		if err := stack.Up(cmd.Context(), cfg, onStatus); err != nil {
@@ -52,13 +54,7 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
-		// Start health engine (loads persisted state if present).
-		snapshotPath := cfg.StateDir() + "health.json"
-		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
-			// onChange: snapshot persisted; nothing extra needed in foreground mode.
-		})
-
-		// Start ingest HTTP transport wired to the engine.
+		// Quick initial container discovery to get the count for the ready banner.
 		bind := cfg.Stack.Ingest.Bind
 		if bind == "" {
 			bind = "127.0.0.1"
@@ -67,21 +63,40 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		if port == 0 {
 			port = 9099
 		}
-		addr := bind + ":" + strconv.Itoa(port)
-		transport := ingest.NewHTTPTransport(addr)
+		ingestAddr := bind + ":" + strconv.Itoa(port)
+
+		containers, err := discovery.ListRunning(ctx, cli)
+		if err != nil {
+			return fmt.Errorf("initial container discovery: %w", err)
+		}
+		watched := discovery.ApplyPolicy(containers, cfg)
+		printReadyBanner(cfg, len(watched), ingestAddr)
+
+		// Write PID file so 'ep down --purge' can locate and terminate us.
+		pidPath := cfg.StateDir() + "ep.pid"
+		if err := pid.Write(pidPath); err != nil {
+			logger.Error("could not write pid file", "err", err)
+		}
+		defer pid.Remove(pidPath)
+
+		// Start health engine (loads persisted state if present).
+		snapshotPath := cfg.StateDir() + "health.json"
+		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
+			// onChange: snapshot persisted; nothing extra needed in foreground mode.
+		})
+
+		// Start ingest HTTP transport wired to the engine.
+		transport := ingest.NewHTTPTransport(ingestAddr)
 		transport.OnBatch(engine.ProcessBatch)
 
 		go func() {
 			if err := transport.Start(ctx); err != nil {
-				onStatus(fmt.Sprintf("ingest transport stopped: %v", err))
+				logger.Error("ingest transport stopped", "err", err)
 			}
 		}()
-		onStatus(fmt.Sprintf("ingest listening on %s", addr))
 
 		gen := configgen.DefaultGenerator{}
-		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {
-			onStatus("container set changed — Vector config reloaded")
-		})
+		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {})
 
 		// Delete the state file so the first reconciler tick always regenerates
 		// the Vector config. This is necessary because up.go writes an empty
@@ -89,7 +104,26 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		// skip regeneration if the container set hasn't changed since last run.
 		_ = os.Remove(cfg.StateDir() + "containers.json")
 
-		onStatus("watching for container changes… (press CTRL+C to stop)")
 		return reconciler.Run(ctx)
 	},
+}
+
+// printBoxed prints msg surrounded by a plain-ASCII single-char box.
+func printBoxed(msg string) {
+	rule := strings.Repeat("=", len(msg)+6)
+	fmt.Println(rule)
+	fmt.Printf("|  %s  |\n", msg)
+	fmt.Println(rule)
+}
+
+func printReadyBanner(cfg *config.Config, watchCount int, ingestAddr string) {
+	fmt.Println()
+	fmt.Printf("  ErrorProbe is ready — watching %d containers\n", watchCount)
+	fmt.Printf("  Grafana  http://localhost:%d\n", cfg.Stack.Grafana.Port)
+	fmt.Printf("  Loki     http://localhost:%d\n", cfg.Stack.Loki.Port)
+	fmt.Printf("  Ingest   http://%s\n", ingestAddr)
+	fmt.Println()
+	printBoxed("Run 'ep watch' to monitor in real-time")
+	printBoxed("Run 'ep check' to use in CI/scripts")
+	fmt.Println()
 }

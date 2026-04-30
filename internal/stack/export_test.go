@@ -17,7 +17,7 @@ func UpCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 
 // DownCore exposes the internal downCore function for unit testing.
 func DownCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, purge bool) error {
-	return downCore(ctx, cfg, cli, purge)
+	return downCore(ctx, cfg, cli, purge, nil)
 }
 
 // SetPollFn replaces the package-level health-poll function.

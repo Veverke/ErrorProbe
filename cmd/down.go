@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
@@ -20,13 +21,13 @@ Named Docker volumes (log data, Grafana state) are preserved unless --purge is g
 			return err
 		}
 
-		if err := stack.Down(cmd.Context(), cfg, purgeFlag); err != nil {
-			return err
+		onStatus := func(msg string) {
+			logger.Info(msg)
 		}
-		return nil
+		return stack.Down(cmd.Context(), cfg, purgeFlag, onStatus)
 	},
 }
 
 func init() {
-	downCmd.Flags().BoolVar(&purgeFlag, "purge", false, "also remove data volumes (loki-data, grafana-data)")
+	downCmd.Flags().BoolVar(&purgeFlag, "purge", false, "also remove data volumes and ~/.errorprobe/ (full uninstall)")
 }

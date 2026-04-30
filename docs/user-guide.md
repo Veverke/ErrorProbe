@@ -2,6 +2,71 @@
 
 ---
 
+## Supported Commands
+
+| Command | Description |
+|---|---|
+| [`up`](#cmd-up) | Start the observability stack and enter the reconciliation loop |
+| [`down`](#cmd-down) | Stop and remove stack containers |
+| [`list`](#cmd-list) | List containers and their watch status |
+| [`status`](#cmd-status) | Show health state per container (OK / HAS_ERRORS / FAILING) |
+| [`watch`](#cmd-watch) | Interactive real-time terminal UI |
+| [`logs <container>`](#cmd-logs) | Stream logs for a container from Loki |
+| [`check`](#cmd-check) | Exit non-zero if any container exceeds the fail threshold — for CI use |
+| [`reload`](#cmd-reload) | Re-read config and apply changes without a full restart |
+| [`update`](#cmd-update) | *(Planned)* Pull latest pinned images and restart the stack |
+
+### Command Flags
+
+<a name="cmd-up"></a>
+**`up`**
+*(no flags)*
+
+<a name="cmd-down"></a>
+**`down`**
+- `--purge` — also delete data volumes (wipes all stored logs and dashboards)
+
+<a name="cmd-list"></a>
+**`list`**
+- `--details` — show the container → image → volume breakdown
+- `--json` — output as JSON
+
+<a name="cmd-status"></a>
+**`status`**
+- `--reset <container>` — reset a container's error state to OK
+- `--json` — output as JSON
+
+<a name="cmd-watch"></a>
+**`watch`**
+*(no flags)*
+
+<a name="cmd-logs"></a>
+**`logs <container>`**
+- `--errors-only` — stream error lines only
+- `--since <duration>` — start from a time offset (default: `15m`)
+
+<a name="cmd-check"></a>
+**`check`**
+- `--json` — output result as JSON
+
+<a name="cmd-reload"></a>
+**`reload`**
+*(no flags)*
+
+<a name="cmd-update"></a>
+**`update`** *(Planned)*
+*(no flags)*
+
+### Global flags
+
+| Flag | Description |
+|---|---|
+| `--config <path>` | Path to config file (overrides discovery) |
+| `--debug` | Enable verbose debug logging |
+| `--version` | Print version and exit |
+
+---
+
 ## What ErrorProbe Is
 
 ErrorProbe is a **single Go binary** that watches your local Docker containers for errors in real time.
@@ -63,7 +128,154 @@ Output as JSON:
 errorprobe list --json
 ```
 
-### 4. Stop the stack
+#### Correlating containers, images, and volumes
+
+The `--details` flag shows the full container → image → volume relationship in a single view — the correlation that `docker ps` and `docker inspect` make difficult to see at a glance:
+
+```
+errorprobe list --details
+```
+
+```
+payments-api  [watching]
+  image:   payments:v2
+  status:  running
+  volumes:
+    [volume: pgdata]  /var/lib/docker/volumes/pgdata/_data → /var/lib/postgresql/data  (rw)
+    [bind]            /host/certs → /etc/ssl/certs  (ro)
+────────────────────────────────────────────────────────────────────────────────
+user-service  [watching]
+  image:   user-svc:latest
+  status:  running
+  volumes: (none)
+```
+
+Each entry shows:
+- The container name and watch status
+- The exact image it was started from
+- Every mount point: named volumes (`[volume: name]`), anonymous volumes, bind mounts (`[bind]`), and tmpfs mounts — each with source path, destination inside the container, and read/write mode
+
+### 5. Check health state
+
+```
+errorprobe status
+```
+
+Prints a one-line-per-container health table: functional state (`✓ OK` / `⚠ HAS ERRORS`), infra state, error count, and last error message excerpt.
+
+```
+CONTAINER      FUNCTIONAL        INFRA    ERRORS  LAST ERROR
+payments-api   ⚠ HAS ERRORS 3   running  3       14:22 ERROR connection refused…
+user-service   ✓ OK              running  0       —
+```
+
+Grafana Explore deep-links are also printed per container so you can jump straight to the logs without manually constructing a LogQL query.
+
+Reset a container's error state after acknowledging a known issue:
+
+```
+errorprobe status --reset payments-api
+```
+
+> **Note:** the reset writes directly to the health snapshot on disk. If `errorprobe up` is running, the live health engine will re-flip the container to `HAS_ERRORS` as soon as the next error event arrives (which may be immediate). Reset is most useful when the stack is not running — for example, in a CI step reading a snapshot after a test run.
+
+Output as JSON:
+
+```
+errorprobe status --json
+```
+
+### 6. Real-time watch TUI
+
+```
+errorprobe watch
+```
+
+Opens a full-screen terminal UI that polls the health snapshot every second and renders a live-updating table of container states.
+
+**Keyboard shortcuts:**
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Navigate containers |
+| `e` | Expand / collapse the last error message for the selected container |
+| `r` | Reset the selected container's health state to OK |
+| `g` | Open the selected container in Grafana Explore (in the system browser) |
+| `q` / `Ctrl+C` | Quit |
+
+### 7. Stream logs
+
+```
+errorprobe logs <container>
+```
+
+Streams log output for the named container from Loki in real time. Requires the stack to be running.
+
+```
+errorprobe logs payments-api --errors-only       # only lines containing "error"
+errorprobe logs payments-api --since 30m         # last 30 minutes (default: 15m)
+```
+
+### 8. CI / script integration
+
+```
+errorprobe check
+```
+
+Reads the persisted health snapshot and exits with a non-zero status code if any watched container has reached the configured fail threshold. Designed to be dropped into CI pipelines and test scripts.
+
+```bash
+errorprobe up
+# ... run your tests ...
+errorprobe check      # exits 1 if any watched container logged errors during the test run
+```
+
+Controlled by `check.fail_on` in config:
+
+| Value | Behaviour |
+|---|---|
+| `HAS_ERRORS` (default) | Exit 1 if any container has state `HAS_ERRORS` or `FAILING` |
+| `FAILING` | Exit 1 only if a container has state `FAILING` (V2 only — not reachable in V1) |
+
+Exclude noisy containers from CI evaluation:
+
+```yaml
+check:
+  exclude:
+    - background-worker
+```
+
+Output as JSON (useful for parsing in scripts):
+
+```
+errorprobe check --json
+```
+
+```json
+{
+  "ok": false,
+  "failing": [
+    { "name": "payments-api", "state": "HAS_ERRORS", "last_error_msg": "ERROR connection refused" }
+  ]
+}
+```
+
+### 9. Apply config changes without a restart
+
+```
+errorprobe reload
+```
+
+Re-reads `errorprobe.yaml`, classifies every changed field, and applies the minimum necessary disruption:
+
+| Change type | Examples | Action |
+|---|---|---|
+| **Soft** | `detection.severity_patterns`, `containers.exclude`, `check.*` | Regenerate Vector config + send SIGHUP to Vector — no container restart |
+| **Hard** | Any `stack.*.image`, any port, `ingest.bind`, `ingest.transport` | Stop, remove, and recreate only the affected containers |
+
+If nothing changed: prints `No configuration changes detected` and exits 0.
+
+### 10. Stop the stack
 
 ```
 errorprobe down
@@ -80,29 +292,6 @@ errorprobe down --purge
 > **Important:** always press `Ctrl+C` in the `errorprobe up` session *before* running `down`. `down` only removes the stack containers — it does not signal the running `up` process to exit. If `up` is left alive after `down`, the reconciler will keep ticking and log SIGHUP errors on every tick until the process is stopped manually.
 
 > **Note:** `errorprobe list` works independently of the stack. It queries Docker directly, so it will still show your user containers even when the stack is down. This is by design — `list` shows what *could* be watched, not what is currently being watched.
-
----
-
-## Commands Reference
-
-| Command | Status | Description |
-|---|---|---|
-| `errorprobe up` | Implemented | Start the observability stack and enter the reconciliation loop |
-| `errorprobe down` | Implemented | Stop and remove stack containers |
-| `errorprobe list` | Implemented | List containers and their watch status |
-| `errorprobe status` | Implemented | Show health state per container (OK / HAS_ERRORS / FAILING) |
-| `errorprobe watch` | Implemented | Interactive real-time terminal UI |
-| `errorprobe logs <container>` | Planned | Stream logs for a container from Loki |
-| `errorprobe check` | Planned | Exit non-zero if any container exceeds the fail threshold — for CI use |
-| `errorprobe update` | Planned | Pull latest pinned images and restart the stack |
-
-### Global flags
-
-| Flag | Description |
-|---|---|
-| `--config <path>` | Path to config file (overrides discovery) |
-| `--debug` | Enable verbose debug logging |
-| `--version` | Print version and exit |
 
 ---
 
@@ -226,6 +415,21 @@ All generated files live in `~/.errorprobe/configs/`. They are overwritten on ev
 | `loki.yaml` | Loki retention and storage settings |
 | `grafana-datasource.yaml` | Grafana provisioning file that registers Loki as a data source |
 
+## Resetting to a Clean State
+
+To fully remove all ErrorProbe artifacts from a machine:
+
+```powershell
+# 1. Remove Docker containers, network, and volumes
+errorprobe down --purge
+
+# 2. Remove all generated configs, state files, and logs
+Remove-Item -Recurse -Force "$env:USERPROFILE\.errorprobe"   # Windows
+rm -rf ~/.errorprobe                                          # macOS / Linux
+```
+
+After this, `errorprobe up` starts from a completely clean slate — as if the tool was just installed.
+
 ---
 
 ## Data Directories
@@ -233,7 +437,7 @@ All generated files live in `~/.errorprobe/configs/`. They are overwritten on ev
 | Path | Contents |
 |---|---|
 | `~/.errorprobe/configs/` | Generated tool configs (vector.toml, loki.yaml, grafana-datasource.yaml) |
-| `~/.errorprobe/state/` | Reconciler state (containers.json) |
+| `~/.errorprobe/state/` | Reconciler state (containers.json), health snapshot (health.json), saved config (config.json) |
 | `~/.errorprobe/logs/` | ErrorProbe's own log file (errorprobe.log) |
 
 Docker volumes `loki-data` and `grafana-data` hold persisted log data and Grafana state respectively. They survive `errorprobe down` unless `--purge` is used.
