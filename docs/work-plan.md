@@ -151,25 +151,63 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 6 — Tier 2 Detection (V2 Start)
+## Phase 6 — Tier 2 Detection (V2 Start) *(completed 2026-05-01)*
 
 **Goal:** Distinguish confirmed failures from noise. Introduce the `FAILING` state.
 
 ### Tasks
 
-- [ ] Implement Loki query engine in `health` package: time-range error rate queries via LogQL HTTP API; configurable window and threshold from `errorprobe.yaml`
-- [ ] Error fingerprinting: normalise repeated stack traces (strip line numbers, memory addresses, timestamps) to produce a stable fingerprint per error pattern
-- [ ] Tier 2 trigger: N errors with the same fingerprint within the configured window → container transitions to `FAILING`
-- [ ] State machine extended: `OK` → `HAS_ERRORS` → `FAILING`; transitions and timestamps persisted to `health.json`
-- [ ] `errorprobe watch` TUI: third state `✗ FAILING` rendered distinctly (colour, icon); show fingerprint summary ("same stack trace 47×")
-- [ ] `check.fail_on: FAILING` now functional; `HAS_ERRORS` and `FAILING` are both valid configurable thresholds
-- [ ] History log introduced: `~/.errorprobe/state/history.jsonl`; one entry per state transition; retention enforced per `history_retention` in `errorprobe.yaml`
+- [x] Implement Loki query engine in `health` package: time-range error rate queries via LogQL HTTP API; configurable window and threshold from `errorprobe.yaml`
+- [x] Error fingerprinting: normalise repeated stack traces (strip line numbers, memory addresses, timestamps) to produce a stable fingerprint per error pattern
+- [x] Tier 2 trigger: N errors with the same fingerprint within the configured window → container transitions to `FAILING`
+- [x] State machine extended: `OK` → `HAS_ERRORS` → `FAILING`; transitions and timestamps persisted to `health.json`
+- [x] `errorprobe watch` TUI: third state `✗ FAILING` rendered distinctly (colour, icon); show fingerprint summary ("same stack trace 47×")
+- [x] `check.fail_on: FAILING` now functional; `HAS_ERRORS` and `FAILING` are both valid configurable thresholds
+- [x] History log introduced: `~/.errorprobe/state/history.jsonl`; one entry per state transition; retention enforced per `history_retention` in `errorprobe.yaml`
 
 **Exit criterion:** A container looping the same error at high frequency transitions to `FAILING`. A container with a single one-off error remains at `HAS_ERRORS`. `errorprobe check --fail-on FAILING` exits 0 for the noisy container and 1 for the confirmed failure.
 
 ---
 
-## Phase 7 — gRPC / OTLP Transport (V2)
+## Phase 7 — Rule-Based Detection Policy
+
+**Goal:** Give developers per-container control over what constitutes `FAILING`. The global Tier 2 threshold from Phase 6 becomes the fallback; named rules in `errorprobe.yaml` override it per container or glob.
+
+### Tasks
+
+- [ ] Extend `config` package: add `detection.rules` map — keyed by container name or glob, value supports `threshold`, `window`, and `pattern` fields; validate on load; document in `errorprobe.yaml` schema comment
+- [ ] Rule resolution in `health` package: `RuleFor(containerName string) DetectionRule` — walk `detection.rules` in config order, first glob match wins, fall back to global Tier 2 defaults if no match
+- [ ] Extend Tier 2 evaluator (Phase 6) to call `RuleFor` per container instead of reading global config directly; no structural change to the evaluator loop
+- [ ] Pattern rules: if a rule specifies `pattern`, match incoming error messages against the glob/substring; a match counts as a direct `FAILING` trigger regardless of count (zero-tolerance); `threshold` on a pattern rule sets minimum match count before promoting (default 1)
+- [ ] `errorprobe watch` TUI: FAILING containers show the rule name or pattern that triggered the state in the expandable detail row
+- [ ] `errorprobe status`: FAILING output includes `triggered by: <rule>` annotation
+- [ ] Unit tests ≥ 90%: `TestRuleFor_ExactMatch`, `TestRuleFor_GlobMatch`, `TestRuleFor_FallbackToGlobal`, `TestRuleFor_FirstMatchWins`; `TestPatternRule_ZeroTolerance_PromotesToFailing`, `TestPatternRule_ThresholdRequired_NoPromotionBelow`, `TestEvaluator_UsesContainerRule_NotGlobal`
+
+**Example `errorprobe.yaml`:**
+```yaml
+detection:
+  tier2:
+    window: 3m
+    threshold: 10       # global default
+
+  rules:
+    payments-api:
+      threshold: 3      # stricter — 3 errors in window → FAILING
+      window: 1m
+    worker-*:
+      threshold: 50     # more tolerant
+    db-*:
+      pattern: "connection refused"   # any match → FAILING immediately
+    auth-service:
+      pattern: "OOMKilled"
+      threshold: 2      # must appear ≥ 2 times
+```
+
+**Exit criterion:** A container matching a pattern rule transitions to `FAILING` on the first matching error regardless of count. A container with a threshold override respects its own threshold rather than the global one. An unmatched container continues to use global Tier 2 defaults. All three cases confirmed via `errorprobe watch` and `errorprobe check`.
+
+---
+
+## Phase 8 — gRPC / OTLP Transport (V2)
 
 **Goal:** Add gRPC as a configurable alternative to HTTP JSON for the Vector → ErrorProbe ingest path.
 
@@ -184,7 +222,7 @@ Each phase has a clear goal, a definition of done, and an ordered task list. Tas
 
 ---
 
-## Phase 8 — Remote Docker & Kubernetes (V2)
+## Phase 9 — Remote Docker & Kubernetes (V2)
 
 **Goal:** Extend discovery and collection to remote hosts.
 
@@ -240,9 +278,10 @@ Phase 0 (skeleton)
                             └── Phase 4 (UX + CI)       ← V1 complete
                                     └── Phase 5 (K8s)   ← V1 follow-on complete
                                     └── Phase 6 (Tier 2)
-                                    └── Phase 7 (gRPC)
-                                    └── Phase 8 (remote)
+                                            └── Phase 7 (rules)  ← depends on Phase 6
+                                    └── Phase 8 (gRPC)
+                                    └── Phase 9 (remote)
 Phase 4 → Distribution (parallel)
 ```
 
-Phases 6, 7, and 8 are independent of each other once Phase 5 is complete and can be implemented in any order.
+Phase 7 depends on Phase 6 (requires the Tier 2 evaluator and `FAILING` state). Phases 8 and 9 are independent of each other and of Phases 6–7 once Phase 5 is complete and can be implemented in any order.

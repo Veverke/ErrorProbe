@@ -57,6 +57,8 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			if ch, ok := e.snapshot.Containers[ev.Container]; ok && ch.ErrorCount != prevCount {
 				changed = true
 			}
+			// Track fingerprints for Tier 2 detection.
+			e.snapshot.RecordFingerprint(ev.Container, Fingerprint(ev.Message))
 		}
 	}
 
@@ -93,6 +95,58 @@ func (e *Engine) Reset(containerName string) error {
 		return fmt.Errorf("health engine: persist after reset: %w", err)
 	}
 
+	if e.onChange != nil {
+		e.onChange(snap)
+	}
+	return nil
+}
+
+// SetFailing transitions the named container to the FAILING state, recording the
+// dominant fingerprint and its occurrence count.  Persists and notifies onChange.
+func (e *Engine) SetFailing(name, fingerprint string, count int) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	ch := e.snapshot.Containers[name]
+	ch.Name = name
+	ch.State = StateFailing
+	ch.DominantFingerprint = fingerprint
+	ch.DominantFingerprintCount = count
+	ch.LastUpdated = time.Now()
+	if e.snapshot.Containers == nil {
+		e.snapshot.Containers = make(map[string]ContainerHealth)
+	}
+	e.snapshot.Containers[name] = ch
+	e.snapshot.SnapshotAt = time.Now()
+	snap := e.snapshot
+
+	if err := SaveSnapshot(e.snapshotPath, snap); err != nil {
+		return fmt.Errorf("health engine: persist after SetFailing: %w", err)
+	}
+	if e.onChange != nil {
+		e.onChange(snap)
+	}
+	return nil
+}
+
+// SetRecovered transitions a FAILING container back to HAS_ERRORS (not OK —
+// errors did occur).  Clears the dominant fingerprint fields.  Persists and notifies.
+func (e *Engine) SetRecovered(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	ch := e.snapshot.Containers[name]
+	ch.State = StateHasErrors
+	ch.DominantFingerprint = ""
+	ch.DominantFingerprintCount = 0
+	ch.LastUpdated = time.Now()
+	e.snapshot.Containers[name] = ch
+	e.snapshot.SnapshotAt = time.Now()
+	snap := e.snapshot
+
+	if err := SaveSnapshot(e.snapshotPath, snap); err != nil {
+		return fmt.Errorf("health engine: persist after SetRecovered: %w", err)
+	}
 	if e.onChange != nil {
 		e.onChange(snap)
 	}

@@ -556,17 +556,18 @@ body {
  *  Phase 1 planned: 1 day (13 pts).  Actual: 1 day.
  *  Phase 2 planned: 14 days (13 pts). Actual: 2 days.
  *  Phase 3 planned: 16 days (21 pts). Actual: 1 day (2026-04-29).
- *  Velocity: 52 pts across 2 calendar days = 26 pts/day (AI-assisted).
+ *  Phase 4 planned: 14 days (13 pts). See phase notes.
+ *  Phase 5 planned: 17 days (21 pts). Actual: completed 2026-07-03 (AI-assisted).
+ *  Phase 6 planned: 21 days (34 pts). Actual: 1 day (2026-05-01).
+ *  Velocity: AI-assisted sessions average ~1 session/phase.
  *  NOTE: Phases 0–3 were all compressed dramatically vs plan.
  *  Phases 4–8 planned durations are kept unchanged.
- *  Only start/end dates are shifted to reflect Phase 3 early finish (2026-04-29).
- *  Phase 4: 2026-04-29 → 2026-05-13 (14 days, as planned)
- *  Phase 5: 2026-05-13 → 2026-05-30 (17 days, as planned)
- *  Phase 6: 2026-05-30 → 2026-06-20 (21 days, as planned)
- *  Phase 7: 2026-06-20 → 2026-07-07 (17 days, as planned)
- *  Phase 8: 2026-07-07 → 2026-07-28 (21 days, as planned)
- *  Revised projected completion: 2026-07-28 (was 2026-09-10).
- *  Remaining story points: 123 pts across 90 calendar days.
+ *  Only start/end dates are shifted to reflect Phase 6 early finish (2026-05-01).
+ *  Phase 6: completed 2026-05-01
+ *  Phase 7: 2026-05-01 → 2026-05-18 (17 days, as planned)
+ *  Phase 8: 2026-05-18 → 2026-06-08 (21 days, as planned)
+ *  Revised projected completion: 2026-06-08 (was 2026-07-28).
+ *  Remaining story points (Phases 7–8): 55 pts across 38 calendar days.
  * ==================================================================== */
 
 const TODAY = new Date('2026-05-01');   // ← keep this current
@@ -681,9 +682,9 @@ const PHASES = [
     points: 34,
     tasks: 16,                // T6.1 – T6.16
     category: "v2",
-    status: "planned",
-    actualEnd: null,
-    progress: 0,
+    status: "completed",
+    actualEnd: "2026-05-01",
+    progress: 100,
   },
   {
     id: 7,
@@ -691,8 +692,8 @@ const PHASES = [
     title: "gRPC / OTLP Transport",
     goal: "gRPC OTLP ingest as configurable alternative to HTTP JSON. " +
           "Transport factory, Vector gRPC sink, reload classifies transport change as hard.",
-    start:    "2026-06-20",
-    end:      "2026-07-07",
+    start:    "2026-05-01",
+    end:      "2026-05-18",
     complexity: "L",
     points: 21,
     tasks: 13,                // T7.1 – T7.13
@@ -707,8 +708,8 @@ const PHASES = [
     title: "Remote Docker & Kubernetes",
     goal: "Remote host discovery (Docker TCP/SSH, kubeconfig context), bearer token auth, " +
           "remote Vector bundle export, remote host grouping in TUI and list.",
-    start:    "2026-07-07",
-    end:      "2026-07-28",
+    start:    "2026-05-18",
+    end:      "2026-06-08",
     complexity: "XL",
     points: 34,
     tasks: 14,                // T8.1 – T8.14
@@ -731,7 +732,7 @@ const MILESTONES = [
     description: "Phase 5 complete: K8s discovery added — original pain-case fully solved",
   },
   {
-    date: "2026-07-27",
+    date: "2026-06-08",
     label: "V2 Complete",
     description: "Phases 6–8 complete: Tier 2 detection, gRPC transport, remote host support",
   },

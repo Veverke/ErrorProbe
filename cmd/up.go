@@ -18,6 +18,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/ingest"
 	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/loki"
 	"github.com/errorprobe/errorprobe/internal/pid"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
@@ -86,6 +87,19 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 			// onChange: snapshot persisted; nothing extra needed in foreground mode.
 		})
 
+		// Initialise the history log and prune old entries on startup.
+		historyPath := cfg.StateDir() + "history.jsonl"
+		historyLog := health.NewHistoryLog(historyPath)
+		if retStr := cfg.HistoryRetention; retStr != "" {
+			if retention, err := config.ParseDuration(retStr); err == nil {
+				if err := historyLog.Prune(retention); err != nil {
+					logger.Error("could not prune history log", "err", err)
+				}
+			} else {
+				logger.Error("invalid history_retention value", "value", retStr, "err", err)
+			}
+		}
+
 		// Start ingest HTTP transport wired to the engine.
 		transport := ingest.NewHTTPTransport(ingestAddr)
 		transport.OnBatch(engine.ProcessBatch)
@@ -95,6 +109,12 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 				logger.Error("ingest transport stopped", "err", err)
 			}
 		}()
+
+		// Start Tier 2 evaluator (FAILING state detection via Loki queries).
+		lokiBase := fmt.Sprintf("http://127.0.0.1:%d", cfg.Stack.Loki.Port)
+		lokiClient := loki.NewClient(lokiBase)
+		tier2 := health.NewTier2Evaluator(lokiClient, cfg, engine, historyLog)
+		go tier2.Run(ctx)
 
 		gen := configgen.DefaultGenerator{}
 

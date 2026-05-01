@@ -27,10 +27,7 @@ watched container has reached or exceeded the health state configured in fail_on
 
 fail_on values:
   HAS_ERRORS  exit 1 when any container has state HAS_ERRORS or FAILING (default)
-  FAILING     exit 1 only when a container has state FAILING
-
-NOTE: FAILING state requires V2 Tier 2 detection and is not reachable in V1.
-Under fail_on=FAILING, containers in HAS_ERRORS state will pass the check.`,
+  FAILING     exit 1 only when a container has state FAILING (Tier 2 detection required)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {

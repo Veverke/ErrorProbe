@@ -13,13 +13,16 @@ const (
 
 // ContainerHealth holds the current health state for a single container.
 type ContainerHealth struct {
-	Name         string          `json:"name"`
-	State        FunctionalState `json:"state"`
-	ErrorCount   int             `json:"error_count"`
-	FirstErrorAt *time.Time      `json:"first_error_at,omitempty"`
-	LastErrorAt  *time.Time      `json:"last_error_at,omitempty"`
-	LastErrorMsg string          `json:"last_error_msg"`
-	LastUpdated  time.Time       `json:"last_updated"`
+	Name                   string            `json:"name"`
+	State                  FunctionalState   `json:"state"`
+	ErrorCount             int               `json:"error_count"`
+	FirstErrorAt           *time.Time        `json:"first_error_at,omitempty"`
+	LastErrorAt            *time.Time        `json:"last_error_at,omitempty"`
+	LastErrorMsg           string            `json:"last_error_msg"`
+	LastUpdated            time.Time         `json:"last_updated"`
+	Fingerprints           map[string]int    `json:"fingerprints,omitempty"`           // fingerprint → occurrence count
+	DominantFingerprint    string            `json:"dominant_fingerprint,omitempty"`   // set when FAILING
+	DominantFingerprintCount int             `json:"dominant_fingerprint_count,omitempty"` // count when FAILING
 }
 
 // HealthSnapshot is an immutable-by-convention snapshot of all container health states.
@@ -49,6 +52,20 @@ func (s *HealthSnapshot) SetError(name, msg string, at time.Time) {
 	s.Containers[name] = ch
 }
 
+// RecordFingerprint increments the occurrence count of fingerprint for the named container.
+// It initialises the Fingerprints map if necessary.
+func (s *HealthSnapshot) RecordFingerprint(name, fingerprint string) {
+	if s.Containers == nil {
+		s.Containers = make(map[string]ContainerHealth)
+	}
+	ch := s.Containers[name]
+	if ch.Fingerprints == nil {
+		ch.Fingerprints = make(map[string]int)
+	}
+	ch.Fingerprints[fingerprint]++
+	s.Containers[name] = ch
+}
+
 // Reset sets the named container state back to OK and clears counts and timestamps.
 func (s *HealthSnapshot) Reset(name string) {
 	if s.Containers == nil {
@@ -61,6 +78,9 @@ func (s *HealthSnapshot) Reset(name string) {
 	ch.FirstErrorAt = nil
 	ch.LastErrorAt = nil
 	ch.LastErrorMsg = ""
+	ch.Fingerprints = nil
+	ch.DominantFingerprint = ""
+	ch.DominantFingerprintCount = 0
 	ch.LastUpdated = time.Now()
 	s.Containers[name] = ch
 }

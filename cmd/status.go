@@ -97,13 +97,17 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 			}
 			errors := "0"
 			lastErr := "—"
-			if ch.State == health.StateHasErrors {
+			if ch.State == health.StateHasErrors || ch.State == health.StateFailing {
 				errors = fmt.Sprintf("%d", ch.ErrorCount)
 				if ch.LastErrorAt != nil {
 					lastErr = ch.LastErrorAt.Format("15:04") + " " + truncate(ch.LastErrorMsg, 30)
 				}
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, funcState, infra, errors, lastErr)
+			// Print fingerprint summary below FAILING containers.
+			if ch.State == health.StateFailing && ch.DominantFingerprintCount > 0 {
+				fmt.Fprintf(w, "\t  same pattern %d×\t\t\t\n", ch.DominantFingerprintCount)
+			}
 		}
 		if err := w.Flush(); err != nil {
 			return err
@@ -125,6 +129,8 @@ func formatFunctionalState(ch health.ContainerHealth) string {
 	switch ch.State {
 	case health.StateHasErrors:
 		return fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount)
+	case health.StateFailing:
+		return fmt.Sprintf("✗ FAILING %d", ch.ErrorCount)
 	default:
 		return "✓ OK"
 	}

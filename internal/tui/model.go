@@ -61,6 +61,7 @@ var (
 	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	okStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	borderStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	selectedBg     = lipgloss.NewStyle().Background(lipgloss.Color("237"))
@@ -191,16 +192,20 @@ func (m Model) View() string {
 
 	header := m.renderHeader(n)
 
-	// EKG color reflects overall health: green = all OK, yellow = has errors.
+	// EKG color reflects overall health: green = all OK, yellow = has errors, red = failing.
 	hasErrors := false
+	isFailing := false
 	for _, ch := range m.snap.Containers {
-		if ch.State == health.StateHasErrors {
+		if ch.State == health.StateFailing {
+			isFailing = true
+		} else if ch.State == health.StateHasErrors {
 			hasErrors = true
-			break
 		}
 	}
 	ekgColor := lipgloss.Color("10") // bright green
-	if hasErrors {
+	if isFailing {
+		ekgColor = lipgloss.Color("9") // bright red
+	} else if hasErrors {
 		ekgColor = lipgloss.Color("11") // bright yellow
 	}
 	ekgSty := lipgloss.NewStyle().Foreground(ekgColor)
@@ -282,6 +287,16 @@ func (m Model) View() string {
 			} else {
 				lastErr = "—"
 			}
+		case health.StateFailing:
+			funcText = fmt.Sprintf("✗ FAILING %d", ch.ErrorCount)
+			funcStyled = failStyle.Render(funcText)
+			if ch.DominantFingerprintCount > 0 {
+				lastErr = fmt.Sprintf("same pattern %d×", ch.DominantFingerprintCount)
+			} else if ch.LastErrorAt != nil {
+				lastErr = ch.LastErrorAt.Format("15:04") + " " + truncateRune(ch.LastErrorMsg, 16)
+			} else {
+				lastErr = "—"
+			}
 		default:
 			funcText = "✓ OK"
 			funcStyled = okStyle.Render(funcText)
@@ -303,9 +318,17 @@ func (m Model) View() string {
 			rows = append(rows, dimStyle.Render("  "+sub))
 		}
 
-		// Expanded view: show full last error message
-		if i == m.cursor && m.expanded && ch.State == health.StateHasErrors {
-			rows = append(rows, dimStyle.Render("  "+ch.LastErrorMsg))
+		// Expanded view: show full last error message or fingerprint detail.
+		if i == m.cursor && m.expanded {
+			if ch.State == health.StateHasErrors && ch.LastErrorMsg != "" {
+				rows = append(rows, dimStyle.Render("  "+ch.LastErrorMsg))
+			} else if ch.State == health.StateFailing {
+				if ch.DominantFingerprintCount > 0 {
+					rows = append(rows, dimStyle.Render(fmt.Sprintf("  same pattern %d×: %s", ch.DominantFingerprintCount, truncateRune(ch.LastErrorMsg, 60))))
+				} else if ch.LastErrorMsg != "" {
+					rows = append(rows, dimStyle.Render("  "+ch.LastErrorMsg))
+				}
+			}
 		}
 	}
 
