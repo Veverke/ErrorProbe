@@ -31,7 +31,6 @@ func (c *Client) Tail(ctx context.Context, query string, since time.Duration, fo
 			start = lines[len(lines)-1].Timestamp.Add(time.Nanosecond)
 		}
 		return nil
-		return nil
 	}
 
 	// First poll immediately so the user sees existing lines without waiting.
