@@ -10,6 +10,9 @@ import (
 type LogEvent struct {
 	Timestamp time.Time `json:"timestamp"`
 	Container string    `json:"container"`
+	Namespace string    `json:"namespace"` // K8s namespace; empty for Docker containers
+	Pod       string    `json:"pod"`       // K8s pod name; empty for Docker containers
+	Runtime   string    `json:"runtime"`   // "docker" | "k8s" | "unknown"
 	Level     string    `json:"level"`
 	Message   string    `json:"message"`
 	Raw       string    `json:"raw"`

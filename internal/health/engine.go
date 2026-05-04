@@ -49,16 +49,17 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 	changed := false
 	for _, ev := range events {
 		if ev.Level == "error" || ev.Level == "warn" {
+			key := logEventKey(ev)
 			prevCount := 0
-			if ch, ok := e.snapshot.Containers[ev.Container]; ok {
+			if ch, ok := e.snapshot.Containers[key]; ok {
 				prevCount = ch.ErrorCount
 			}
-			e.snapshot.SetError(ev.Container, ev.Message, ev.Timestamp)
-			if ch, ok := e.snapshot.Containers[ev.Container]; ok && ch.ErrorCount != prevCount {
+			e.snapshot.SetError(key, ev.Message, ev.Timestamp)
+			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
 				changed = true
 			}
 			// Track fingerprints for Tier 2 detection.
-			e.snapshot.RecordFingerprint(ev.Container, Fingerprint(ev.Message))
+			e.snapshot.RecordFingerprint(key, Fingerprint(ev.Message))
 		}
 	}
 
@@ -73,6 +74,17 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			e.onChange(snap)
 		}
 	}
+}
+
+// logEventKey returns the canonical health-snapshot key for a log event.
+// It mirrors ContainerMeta.HealthKey() on the ingest side:
+//   - K8s events (Namespace non-empty): "namespace/container_name"
+//   - Docker events: bare container name
+func logEventKey(ev ingest.LogEvent) string {
+	if ev.Namespace != "" {
+		return ev.Namespace + "/" + ev.Container
+	}
+	return ev.Container
 }
 
 // Snapshot returns a thread-safe copy of the current health snapshot.

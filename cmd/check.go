@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -68,19 +69,21 @@ fail_on values:
 			fmt.Println("\033[92m✓\033[0m All containers healthy")
 		} else {
 			enableListVTP()
-			icon := "\033[93m⚠\033[0m"
 			for _, f := range failing {
+				var icon string
 				if f.State == string(health.StateFailing) {
 					icon = "\033[91m✗\033[0m"
-					break
+				} else {
+					icon = "\033[93m⚠\033[0m"
 				}
-			}
-			for _, f := range failing {
-				at := ""
+				at := "—"
 				if f.LastErrorAt != nil {
-					at = "  at=" + f.LastErrorAt.Local().Format("2006-01-02 15:04:05")
+					at = f.LastErrorAt.Local().Format("2006-01-02 15:04:05")
 				}
-				fmt.Fprintf(os.Stderr, "%s  %s  state=%s  last_error=%q%s\n", icon, f.Name, f.State, f.LastErrorMsg, at)
+				fmt.Fprintf(os.Stderr, "%s  %-30s  %-15s  %s\n", icon, f.Name, f.State, at)
+				if msg := checkHumanMsg(f.LastErrorMsg); msg != "" {
+					fmt.Fprintf(os.Stderr, "   └─ %s\n", msg)
+				}
 			}
 		}
 
@@ -89,6 +92,34 @@ fail_on values:
 		}
 		return nil
 	},
+}
+
+// healthKeyDisplay returns the human-readable container name from a health key.
+// For K8s compound keys ("namespace/container") this is the container part;
+// for Docker bare-name keys this is the whole string.
+func healthKeyDisplay(key string) string {
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		return key[idx+1:]
+	}
+	return key
+}
+
+// checkHumanMsg extracts the most readable part of a log message.
+// For logfmt it returns msg="..."; otherwise the first ~120 runes.
+func checkHumanMsg(raw string) string {
+	for _, prefix := range []string{`msg="`, `message="`} {
+		if idx := strings.Index(raw, prefix); idx >= 0 {
+			rest := raw[idx+len(prefix):]
+			if end := strings.Index(rest, `"`); end >= 0 && end > 0 {
+				return rest[:end]
+			}
+		}
+	}
+	r := []rune(strings.TrimSpace(raw))
+	if len(r) > 120 {
+		return string(r[:119]) + "…"
+	}
+	return string(r)
 }
 
 // CheckResult is a single failing container entry.
@@ -113,15 +144,15 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 	}
 
 	var failing []CheckResult
-	for name, ch := range snap.Containers {
-		if excluded[name] {
+	for key, ch := range snap.Containers {
+		if excluded[key] || excluded[healthKeyDisplay(key)] {
 			continue
 		}
 		switch failOn {
 		case "HAS_ERRORS":
 			if ch.State == health.StateHasErrors || ch.State == health.StateFailing {
 				failing = append(failing, CheckResult{
-					Name:         name,
+					Name:         healthKeyDisplay(key),
 					State:        string(ch.State),
 					LastErrorAt:  ch.LastErrorAt,
 					LastErrorMsg: ch.LastErrorMsg,
@@ -130,7 +161,7 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 		case "FAILING":
 			if ch.State == health.StateFailing {
 				failing = append(failing, CheckResult{
-					Name:         name,
+					Name:         healthKeyDisplay(key),
 					State:        string(ch.State),
 					LastErrorAt:  ch.LastErrorAt,
 					LastErrorMsg: ch.LastErrorMsg,

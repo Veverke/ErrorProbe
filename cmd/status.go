@@ -58,7 +58,7 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 
 		infraState := make(map[string]string, len(ws.Containers))
 		for _, c := range ws.Containers {
-			infraState[c.Name] = c.InfraStatus
+			infraState[c.HealthKey()] = c.InfraStatus
 		}
 
 		if statusJSON {
@@ -71,12 +71,13 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 		}
 
 		// Build the full container list: union of health snapshot + watch set.
+		// Keys are health keys (ContainerMeta.HealthKey()), not bare names.
 		namesSet := make(map[string]struct{})
 		for n := range snap.Containers {
 			namesSet[n] = struct{}{}
 		}
 		for _, c := range ws.Containers {
-			namesSet[c.Name] = struct{}{}
+			namesSet[c.HealthKey()] = struct{}{}
 		}
 
 		names := make([]string, 0, len(namesSet))
@@ -88,10 +89,10 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "CONTAINER\tFUNCTIONAL\tINFRA\tERRORS\tLAST ERROR")
 
-		for _, name := range names {
-			ch := snap.Containers[name]
+		for _, key := range names {
+			ch := snap.Containers[key]
 			funcState := formatFunctionalState(ch)
-			infra := infraState[name]
+			infra := infraState[key]
 			if infra == "" {
 				infra = "unknown"
 			}
@@ -103,7 +104,8 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 					lastErr = ch.LastErrorAt.Format("15:04") + " " + truncate(ch.LastErrorMsg, 30)
 				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, funcState, infra, errors, lastErr)
+			displayName := healthKeyDisplay(key)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", displayName, funcState, infra, errors, lastErr)
 			// Print fingerprint summary below FAILING containers.
 			if ch.State == health.StateFailing && ch.DominantFingerprintCount > 0 {
 				fmt.Fprintf(w, "\t  same pattern %d×\t\t\t\n", ch.DominantFingerprintCount)
@@ -117,9 +119,10 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 		grafanaBase := fmt.Sprintf("http://localhost:%d", cfg.Stack.Grafana.Port)
 		fmt.Println()
 		fmt.Println("Grafana Explore:")
-		for _, name := range names {
-			url := links.BuildExploreURL(grafanaBase, name, time.Time{}, time.Time{})
-			fmt.Printf("  %-30s %s\n", name, url)
+		for _, key := range names {
+			displayName := healthKeyDisplay(key)
+			url := links.BuildExploreURL(grafanaBase, healthKeyDisplay(key), time.Time{}, time.Time{})
+			fmt.Printf("  %-30s %s\n", displayName, url)
 		}
 		return nil
 	},
@@ -135,6 +138,11 @@ func formatFunctionalState(ch health.ContainerHealth) string {
 		return "✓ OK"
 	}
 }
+
+// healthKeyDisplay returns the human-readable container name from a health key.
+// For K8s compound keys ("namespace/container") this is the container part;
+// for Docker bare-name keys this is the whole string.
+// Defined in check.go (same package).
 
 func truncate(s string, n int) string {
 	r := []rune(s)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -112,12 +113,26 @@ type lokiInstantQueryResponse struct {
 	} `json:"data"`
 }
 
-// CountErrors queries Loki for the number of error log lines for containerName
-// within the given time window using count_over_time.
-// It uses the instant query endpoint (/loki/api/v1/query) for a current point-in-time count.
-func (c *Client) CountErrors(ctx context.Context, containerName string, since time.Duration) (int, error) {
+// CountErrors queries Loki for the number of error log lines within the given
+// time window. containerKey is a health-snapshot key as produced by
+// ContainerMeta.HealthKey():
+//   - Docker containers: bare container name, e.g. "registry"
+//   - K8s containers:    "namespace/container_name", e.g. "nr1-selling/selling-counter"
+//
+// When a namespace prefix is present the Loki query also filters by the
+// `namespace` stream label, so containers with the same name in different
+// namespaces are counted separately.
+func (c *Client) CountErrors(ctx context.Context, containerKey string, since time.Duration) (int, error) {
 	window := durationToPromQL(since)
-	query := fmt.Sprintf(`count_over_time({container=%q,level="error"}[%s])`, containerName, window)
+
+	var query string
+	if idx := strings.Index(containerKey, "/"); idx >= 0 {
+		namespace := containerKey[:idx]
+		container := containerKey[idx+1:]
+		query = fmt.Sprintf(`count_over_time({container=%q,namespace=%q,level="error"}[%s])`, container, namespace, window)
+	} else {
+		query = fmt.Sprintf(`count_over_time({container=%q,level="error"}[%s])`, containerKey, window)
+	}
 
 	params := url.Values{}
 	params.Set("query", query)

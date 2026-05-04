@@ -36,6 +36,24 @@ type WatchSet struct {
 	GeneratedAt time.Time
 }
 
+// HealthKey returns the canonical key used to cross-reference this container
+// in the health snapshot.
+//
+// For K8s containers (Namespace non-empty) the key is "namespace/container_name",
+// which is stable across pod restarts and unique across namespaces.
+// For Docker containers the key is the bare container name, which Docker enforces
+// to be globally unique on the host.
+//
+// This is the single authoritative implementation — all callers (TUI, status,
+// check, health engine) derive their lookup keys through this method or its
+// LogEvent-side mirror in the health package.
+func (c ContainerMeta) HealthKey() string {
+	if c.Namespace != "" {
+		return c.Namespace + "/" + c.Name
+	}
+	return c.Name
+}
+
 // Diff returns the containers added to and removed from ws relative to previous.
 // A container is identified by its ID.
 func (ws WatchSet) Diff(previous WatchSet) (added []ContainerMeta, removed []ContainerMeta) {

@@ -179,13 +179,14 @@ func (m Model) View() string {
 	n := len(names)
 
 	// Build lookup maps from watch set for infra state and K8s metadata.
+	// Keys are health-snapshot keys (ContainerMeta.HealthKey()), not bare display names.
 	infraState := make(map[string]string, len(m.ws.Containers))
 	containerRuntime := make(map[string]string, len(m.ws.Containers))
 	containerSubtitle := make(map[string]string, len(m.ws.Containers))
 	restartCount := make(map[string]int, len(m.ws.Containers))
 	prevExitMsg := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
-		key := normaliseContainerName(c.Name)
+		key := c.HealthKey()
 		infraState[key] = c.InfraStatus
 		containerRuntime[key] = c.Runtime
 		restartCount[key] = c.RestartCount
@@ -350,7 +351,7 @@ func (m Model) View() string {
 			funcText = fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount)
 			funcStyled = errStyle.Render(funcText)
 			if ch.LastErrorAt != nil {
-				lastErr = ch.LastErrorAt.Format("15:04") + " " + truncateRune(ch.LastErrorMsg, 16)
+				lastErr = ch.LastErrorAt.Format("15:04") + " " + humanMsg(ch.LastErrorMsg)
 			} else {
 				lastErr = "—"
 			}
@@ -360,7 +361,7 @@ func (m Model) View() string {
 			if ch.DominantFingerprintCount > 0 {
 				lastErr = fmt.Sprintf("same pattern %d×", ch.DominantFingerprintCount)
 			} else if ch.LastErrorAt != nil {
-				lastErr = ch.LastErrorAt.Format("15:04") + " " + truncateRune(ch.LastErrorMsg, 16)
+				lastErr = ch.LastErrorAt.Format("15:04") + " " + humanMsg(ch.LastErrorMsg)
 			} else {
 				lastErr = "—"
 			}
@@ -387,7 +388,7 @@ func (m Model) View() string {
 		}
 
 		cell := func(s string, w int) string { return " " + truncPad(s, w) + " " }
-		c1 := cell(name, col1W)
+		c1 := cell(healthKeyDisplay(name), col1W)
 		c2 := " " + padRight(funcStyled, col2W) + " "
 		// Color infra status: green=running, yellow=restarting/pending, red=error/failed/crashed/unknown
 		var infraStyled string
@@ -556,48 +557,53 @@ func (m Model) renderHeader(n int) []string {
 
 // sortedNames returns a deterministically ordered list of all container names
 // from both the health snapshot and the watch set, sorted by runtime then name.
-// Names in pod/container format (stale watch set data) are normalised to just
-// the container part.
+// sortedNames returns the union of all health keys from the snapshot and the
+// watch set, sorted by runtime then by display name.
+// Keys are ContainerMeta.HealthKey() values ("namespace/container" for K8s,
+// bare name for Docker) — the same keys used in the health snapshot map.
 func (m Model) sortedNames() []string {
 	seen := make(map[string]struct{})
-	for n := range m.snap.Containers {
-		seen[normaliseContainerName(n)] = struct{}{}
+	for key := range m.snap.Containers {
+		seen[key] = struct{}{}
 	}
 	for _, c := range m.ws.Containers {
-		seen[normaliseContainerName(c.Name)] = struct{}{}
+		seen[c.HealthKey()] = struct{}{}
 	}
-	// Build runtime lookup.
-	rtByName := make(map[string]string, len(m.ws.Containers))
+	// Build runtime lookup keyed by health key.
+	rtByKey := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
-		rtByName[normaliseContainerName(c.Name)] = c.Runtime
+		rtByKey[c.HealthKey()] = c.Runtime
 	}
 	names := make([]string, 0, len(seen))
 	for n := range seen {
 		names = append(names, n)
 	}
 	sort.Slice(names, func(i, j int) bool {
-		ri := rtByName[names[i]]
+		ri := rtByKey[names[i]]
 		if ri == "" {
 			ri = "docker"
 		}
-		rj := rtByName[names[j]]
+		rj := rtByKey[names[j]]
 		if rj == "" {
 			rj = "docker"
 		}
 		if ri != rj {
 			return ri < rj
 		}
-		return names[i] < names[j]
+		// Sort by display name (last segment of health key) for readability.
+		return healthKeyDisplay(names[i]) < healthKeyDisplay(names[j])
 	})
 	return names
 }
 
-// normaliseContainerName strips the pod/ prefix from stale pod/container format names.
-func normaliseContainerName(name string) string {
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		return name[idx+1:]
+// healthKeyDisplay returns the human-readable container name portion of a health key.
+// For K8s keys ("namespace/container") this is the container part; for Docker keys
+// (bare name) this is the whole string.
+func healthKeyDisplay(key string) string {
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		return key[idx+1:]
 	}
-	return name
+	return key
 }
 
 // renderEKG returns a 4-row EKG frame by slicing a scrolling window over
@@ -626,6 +632,25 @@ func truncateRune(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// humanMsg extracts the most readable part of a log message for inline display.
+// For logfmt lines it returns the msg="..." field; otherwise it strips structural
+// noise and returns the first ~200 runes.
+func humanMsg(raw string) string {
+	for _, prefix := range []string{`msg="`, `message="`} {
+		if idx := strings.Index(raw, prefix); idx >= 0 {
+			rest := raw[idx+len(prefix):]
+			if end := strings.Index(rest, `"`); end >= 0 && end > 0 {
+				return rest[:end]
+			}
+		}
+	}
+	r := []rune(strings.TrimSpace(raw))
+	if len(r) > 200 {
+		return string(r[:199]) + "…"
+	}
+	return string(r)
 }
 
 func repeat(s string, n int) string {

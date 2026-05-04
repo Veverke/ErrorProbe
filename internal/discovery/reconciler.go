@@ -123,6 +123,14 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		} else if hasPrev && prev.PrevExitMsg != "" {
 			// Carry forward the diagnostic from the previous tick.
 			approved[i].PrevExitMsg = prev.PrevExitMsg
+		} else if !hasPrev && c.RestartCount > 0 {
+			// First observation and the container has already restarted: fetch the
+			// previous exit message now so operators see the crash reason immediately.
+			msg := r.fetchPrevExitMsg(ctx, c.Namespace, c.Pod, c.Name)
+			if msg != "" {
+				approved[i].PrevExitMsg = msg
+				restartDiagChanged = true
+			}
 		}
 	}
 

@@ -156,6 +156,7 @@ func (c *Client) applyConfigMap(ctx context.Context, vectorConfigTOML string) er
 
 func (c *Client) applyDaemonSet(ctx context.Context, image string) error {
 	hostPathDir := corev1.HostPathDirectory
+	hostPathDirOrCreate := corev1.HostPathDirectoryOrCreate
 	ds := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      daemonSetName,
@@ -187,6 +188,14 @@ func (c *Client) applyDaemonSet(ctx context.Context, image string) error {
 									ValueFrom: &corev1.EnvVarSource{
 										FieldRef: &corev1.ObjectFieldSelector{
 											FieldPath: "status.hostIP",
+										},
+									},
+								},
+								{
+									Name: "VECTOR_SELF_NODE_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "spec.nodeName",
 										},
 									},
 								},
@@ -232,7 +241,7 @@ func (c *Client) applyDaemonSet(ctx context.Context, image string) error {
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{
 									Path: "/var/lib/errorprobe-vector",
-									Type: &hostPathDir,
+									Type: &hostPathDirOrCreate,
 								},
 							},
 						},
