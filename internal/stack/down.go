@@ -36,10 +36,10 @@ func downCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, pur
 		onStatus = func(string) {}
 	}
 
-	// Kill the background 'ep up' process FIRST, before any Docker API calls.
-	// ep up polls Docker continuously; its in-flight requests saturate the
-	// named pipe on Docker Desktop / Windows, causing all our teardown calls
-	// to block and time out.
+	// Kill the background 'ep up' process FIRST, before any Docker API calls,
+	// unless cmd/down.go already did it (which it does when called via the CLI).
+	// This path is retained so that stack.Down() callers (tests, future API) also
+	// benefit from the kill without depending on cmd/down.go.
 	pidPath := cfg.StateDir() + "ep.pid"
 	res, killErr := pid.KillRunning(pidPath)
 	logger.Debug("ep up kill attempt",
@@ -51,6 +51,9 @@ func downCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, pur
 		"wait_err", res.WaitErr,
 		"err", killErr,
 	)
+	if !res.Found {
+		_ = pid.KillByName("ep")
+	}
 	// Wait for the pipe to be ready for HEAVY container operations.
 	// Ping goes through a fast path in Docker Desktop and succeeds even when
 	// the container subsystem is blocked. ContainerList is in the same queue
@@ -180,8 +183,27 @@ func downCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, pur
 		dataDir := cfg.DataDir()
 		onStatus(fmt.Sprintf("removing user profile data at %s", dataDir))
 		logger.Close() // release this process's own log handle
-		if err := os.RemoveAll(dataDir); err != nil {
-			return fmt.Errorf("removing data directory %s: %w", dataDir, err)
+
+		// On Windows, killing ep up releases its log file handle asynchronously —
+		// the OS may not free the handle immediately after TerminateProcess returns.
+		// Retry RemoveAll for up to 5 seconds to give the OS time to close handles.
+		var removeErr error
+		for attempt := 0; attempt < 10; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(500 * time.Millisecond):
+				}
+			}
+			removeErr = os.RemoveAll(dataDir)
+			if removeErr == nil {
+				break
+			}
+			logger.Debug("remove data dir attempt failed", "attempt", attempt+1, "err", removeErr)
+		}
+		if removeErr != nil {
+			return fmt.Errorf("removing data directory %s: %w", dataDir, removeErr)
 		}
 	}
 

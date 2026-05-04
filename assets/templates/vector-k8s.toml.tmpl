@@ -58,7 +58,7 @@ codec = "json"
 [sinks.errorprobe_ingest]
 type = "http"
 inputs = ["normalize"]
-uri = "http://${HOST_IP}:{{.IngestPort}}/ingest"
+uri = "http://host.docker.internal:{{.IngestPort}}/ingest"
 method = "post"
 
 [sinks.errorprobe_ingest.encoding]

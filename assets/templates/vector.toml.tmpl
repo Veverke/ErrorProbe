@@ -31,6 +31,9 @@ source = '''
     .container = "unknown"
     .runtime = "unknown"
   }
+  # Ensure K8s-only fields exist so Loki label templates don't error.
+  if !exists(.pod) { .pod = "" }
+  if !exists(.namespace) { .namespace = "" }
 
   # Infer severity level
   msg = raw

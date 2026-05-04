@@ -50,6 +50,7 @@ type Model struct {
 	grafanaBaseURL string
 	cursor         int
 	expanded       bool
+	hScroll        int
 	width          int
 	height         int
 	quitting       bool
@@ -98,16 +99,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				m.expanded = false
+				m.hScroll = 0
 			}
 		case "down", "j":
 			rows := m.sortedNames()
 			if m.cursor < len(rows)-1 {
 				m.cursor++
-				m.expanded = false
+				m.hScroll = 0
+			}
+		case "left":
+			if m.expanded {
+				m.hScroll -= 10
+				if m.hScroll < 0 {
+					m.hScroll = 0
+				}
+			}
+		case "right":
+			if m.expanded {
+				m.hScroll += 10
 			}
 		case "e":
 			m.expanded = !m.expanded
+			m.hScroll = 0
 		case "r":
 			rows := m.sortedNames()
 			if m.cursor < len(rows) {
@@ -440,12 +453,17 @@ func (m Model) View() string {
 		// Expanded view: show full last error message, infra detail, or restart count.
 		if i == m.cursor && m.expanded {
 			var detail string
+			pem := prevExitMsg[name]
+			rc := restartCount[name]
 			switch ch.State {
 			case health.StateHasErrors:
 				if ch.LastErrorMsg != "" {
 					detail = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
 				} else {
 					detail = fmt.Sprintf("⚠  has errors (%d total, no message)", ch.ErrorCount)
+				}
+				if pem != "" {
+					detail += "  │  prev exit: " + pem
 				}
 			case health.StateFailing:
 				if ch.DominantFingerprintCount > 0 {
@@ -455,13 +473,19 @@ func (m Model) View() string {
 				} else {
 					detail = "✗  failing (no message)"
 				}
+				if pem != "" {
+					detail += "  │  prev exit: " + pem
+				}
 			default:
 				// Show infra detail even if no log errors.
-				rc := restartCount[name]
 				switch infra {
 				case "restarting":
-					pem := prevExitMsg[name]
-					if pem != "" {
+					if ch.ErrorCount > 0 && ch.LastErrorMsg != "" {
+						detail = fmt.Sprintf("⚠  current (%d errors): %s", ch.ErrorCount, ch.LastErrorMsg)
+						if pem != "" {
+							detail += "  │  prev exit: " + pem
+						}
+					} else if pem != "" {
 						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  prev exit: %s", rc, pem)
 					} else {
 						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  (no prev exit log)", rc)
@@ -477,12 +501,45 @@ func (m Model) View() string {
 				detail += "  ·  " + sub
 			}
 			innerW := col1W + 2 + col2W + 2 + col3W + 2 + col4W + 2 // content width between outer │
+			// Horizontal scroll: show a scrollable window into the full detail string.
+			// Right/Left keys move the window; ◀ ▶ arrows indicate more content.
 			detailRunes := []rune(detail)
-			if len(detailRunes) > innerW {
-				detail = string(detailRunes[:innerW-1]) + "…"
+			totalLen := len(detailRunes)
+			hOff := m.hScroll
+			if hOff > totalLen {
+				hOff = totalLen
 			}
-			detailPadded := " " + detail + strings.Repeat(" ", innerW-lipgloss.Width(detail))
-			contentRows = append(contentRows, borderStyle.Render("│")+dimStyle.Render(detailPadded)+borderStyle.Render("│"))
+			viewW := innerW - 1 // -1 for leading space
+			hasMore := totalLen > viewW
+			if hasMore {
+				viewW -= 2 // room for ◀ ▶ arrows
+			}
+			if viewW < 1 {
+				viewW = 1
+			}
+			end := hOff + viewW
+			if end > totalLen {
+				end = totalLen
+			}
+			visible := string(detailRunes[hOff:end])
+			pad := viewW - lipgloss.Width(visible)
+			if pad < 0 {
+				pad = 0
+			}
+			var detailLine string
+			if !hasMore {
+				detailLine = " " + visible + strings.Repeat(" ", pad)
+			} else {
+				leftArr, rightArr := " ", " "
+				if hOff > 0 {
+					leftArr = "◀"
+				}
+				if end < totalLen {
+					rightArr = "▶"
+				}
+				detailLine = " " + leftArr + visible + strings.Repeat(" ", pad) + rightArr
+			}
+			contentRows = append(contentRows, borderStyle.Render("│")+dimStyle.Render(detailLine)+borderStyle.Render("│"))
 		}
 	}
 
@@ -534,8 +591,8 @@ func (m Model) renderHeader(n int) []string {
 	title := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n))
 	titleW := lipgloss.Width(title)
 
-	hintsAll := "[↑↓] navigate  [e] expand  [r] reset  [g] grafana explore  [o] overview  [q] quit"
-	hintsA := "[↑↓] navigate  [e] expand  [r] reset"
+	hintsAll := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [g] grafana explore  [o] overview  [q] quit"
+	hintsA := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset"
 	hintsB := "[g] grafana explore  [o] overview  [q] quit"
 
 	w := m.width

@@ -75,7 +75,9 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		// Write PID file so 'ep down --purge' can locate and terminate us.
 		pidPath := cfg.StateDir() + "ep.pid"
-		if err := pid.Write(pidPath); err != nil {
+		if err := os.MkdirAll(cfg.StateDir(), 0o755); err != nil {
+			logger.Error("could not create state dir", "err", err)
+		} else if err := pid.Write(pidPath); err != nil {
 			logger.Error("could not write pid file", "err", err)
 		}
 		defer pid.Remove(pidPath)
