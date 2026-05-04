@@ -64,14 +64,23 @@ fail_on values:
 				return fmt.Errorf("writing JSON output: %w", err)
 			}
 		} else if ok {
-			fmt.Println("All containers healthy")
+			enableListVTP()
+			fmt.Println("\033[92m✓\033[0m All containers healthy")
 		} else {
+			enableListVTP()
+			icon := "\033[93m⚠\033[0m"
+			for _, f := range failing {
+				if f.State == string(health.StateFailing) {
+					icon = "\033[91m✗\033[0m"
+					break
+				}
+			}
 			for _, f := range failing {
 				at := ""
 				if f.LastErrorAt != nil {
 					at = "  at=" + f.LastErrorAt.Local().Format("2006-01-02 15:04:05")
 				}
-				fmt.Fprintf(os.Stderr, "  %s  state=%s  last_error=%q%s\n", f.Name, f.State, f.LastErrorMsg, at)
+				fmt.Fprintf(os.Stderr, "%s  %s  state=%s  last_error=%q%s\n", icon, f.Name, f.State, f.LastErrorMsg, at)
 			}
 		}
 

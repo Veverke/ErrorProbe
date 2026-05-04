@@ -16,6 +16,16 @@
 | [`reload`](#cmd-reload) | Re-read config and apply changes without a full restart |
 | [`update`](#cmd-update) | *(Planned)* Pull latest pinned images and restart the stack |
 
+> **`list` vs `check` vs `watch` at a glance**
+>
+> | Command | Data source | Audience | Purpose |
+> |---|---|---|---|
+> | `list` | Live Docker / K8s API | Human | Discovery — which containers exist and whether they match the watch policy. Nothing about health state. |
+> | `check` | Persisted `health.json` snapshot | CI / scripts | Gate — reads the last known health state and exits 0 or 1. Designed to be non-interactive and scriptable. |
+> | `watch` | Persisted `health.json` snapshot | Human | Live monitoring — interactive full-screen TUI that polls for health changes in real time. |
+>
+> `check` and `watch` both read `health.json`, but serve entirely different consumers: `check` is for automation, `watch` is for humans.
+
 ### Command Flags
 
 <a name="cmd-up"></a>
