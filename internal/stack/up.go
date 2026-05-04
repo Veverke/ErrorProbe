@@ -36,15 +36,20 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 
 	// 1. Verify Docker daemon is reachable.
 	onStatus("checking docker daemon…")
-	if err := cli.Ping(ctx); err != nil {
-		return err
+	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+	pingErr := cli.Ping(pingCtx)
+	pingCancel()
+	if pingErr != nil {
+		return pingErr
 	}
 
 	// 2. Idempotency: if all three containers are already running, skip
 	// port checks and image pulls — nothing to do.
 	allRunning := true
 	for _, name := range []string{ContainerLoki, ContainerGrafana, ContainerVector} {
-		running, err := cli.ContainerRunning(ctx, name)
+		checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
+		running, err := cli.ContainerRunning(checkCtx, name)
+		checkCancel()
 		if err != nil {
 			return err
 		}
@@ -99,21 +104,29 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 
 	// 6. Create network.
 	onStatus("ensuring docker network…")
-	if err := cli.CreateNetwork(ctx, NetworkName); err != nil {
-		return err
+	netCtx, netCancel := context.WithTimeout(ctx, 10*time.Second)
+	netErr := cli.CreateNetwork(netCtx, NetworkName)
+	netCancel()
+	if netErr != nil {
+		return netErr
 	}
 
 	// 7. Create volumes.
 	for _, vol := range []string{VolumeLokiData, VolumeGrafanaData} {
-		if err := cli.CreateVolume(ctx, vol); err != nil {
-			return err
+		volCtx, volCancel := context.WithTimeout(ctx, 10*time.Second)
+		volErr := cli.CreateVolume(volCtx, vol)
+		volCancel()
+		if volErr != nil {
+			return volErr
 		}
 	}
 
 	// 8. Start Loki.
 	onStatus("starting loki…")
 	lokiConfigPath := filepath.Join(configsDir, "loki-config.yaml")
-	if err := cli.StartContainer(ctx, docker.ContainerSpec{
+	startLokiCtx, startLokiCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer startLokiCancel()
+	if err := cli.StartContainer(startLokiCtx, docker.ContainerSpec{
 		Name:  ContainerLoki,
 		Image: cfg.Stack.Loki.Image,
 		Cmd:   []string{"-config.file=/etc/loki/local-config.yaml"},
@@ -134,8 +147,11 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 
 	// 9. Start Grafana.
 	onStatus("starting grafana…")
+	startLokiCancel() // release loki deadline
 	grafanaProvisioningDir := filepath.Join(configsDir, "grafana", "provisioning")
-	if err := cli.StartContainer(ctx, docker.ContainerSpec{
+	startGrafCtx, startGrafCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer startGrafCancel()
+	if err := cli.StartContainer(startGrafCtx, docker.ContainerSpec{
 		Name:  ContainerGrafana,
 		Image: cfg.Stack.Grafana.Image,
 		Ports: []docker.PortBinding{
@@ -157,6 +173,7 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 	}
 
 	// 10. Start Vector.
+	startGrafCancel() // release grafana deadline
 	// SECURITY NOTE: The host Docker socket (/var/run/docker.sock) is mounted into
 	// the Vector container to enable the docker_logs source, which requires access
 	// to the Docker daemon API to read container logs.
@@ -175,7 +192,9 @@ func upCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, onSta
 	//   - Ensure the Vector image is pinned to a verified digest.
 	onStatus("starting vector…")
 	vectorConfigPath := filepath.Join(configsDir, "vector.toml")
-	if err := cli.StartContainer(ctx, docker.ContainerSpec{
+	startVecCtx, startVecCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer startVecCancel()
+	if err := cli.StartContainer(startVecCtx, docker.ContainerSpec{
 		Name:  ContainerVector,
 		Image: cfg.Stack.Vector.Image,
 		Cmd:   []string{"--config", "/etc/vector/vector.toml"},

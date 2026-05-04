@@ -29,6 +29,11 @@ func (s *stubK8sAPI) IsAvailable(ctx context.Context) bool {
 	return s.Ping(ctx) == nil
 }
 func (s *stubK8sAPI) ListPods(_ context.Context) ([]k8s.PodInfo, error) { return nil, nil }
+func (s *stubK8sAPI) ApplyVectorDaemonSet(_ context.Context, _, _ string) error { return nil }
+func (s *stubK8sAPI) DeleteVectorDaemonSet(_ context.Context) error              { return nil }
+func (s *stubK8sAPI) GetPreviousLogs(_ context.Context, _, _, _ string, _ int) (string, error) {
+	return "", nil
+}
 
 // ---------------------------------------------------------------------------
 // T5.10 — K8s client tests

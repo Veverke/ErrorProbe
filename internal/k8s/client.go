@@ -3,6 +3,8 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -136,4 +138,26 @@ func startedAt(containers []ContainerInfo) time.Time {
 		}
 	}
 	return earliest
+}
+
+// GetPreviousLogs fetches up to tailLines lines from the previous terminated
+// container instance. Returns an empty string when no previous log exists
+// (e.g. the container has never restarted, or the node has been recycled).
+func (c *Client) GetPreviousLogs(ctx context.Context, namespace, podName, containerName string, tailLines int) (string, error) {
+	tail := int64(tailLines)
+	req := c.cs.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
+		Container: containerName,
+		Previous:  true,
+		TailLines: &tail,
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return "", fmt.Errorf("streaming previous logs for %s/%s/%s: %w", namespace, podName, containerName, err)
+	}
+	defer stream.Close()
+	var buf strings.Builder
+	if _, err := io.Copy(&buf, stream); err != nil {
+		return "", fmt.Errorf("reading previous logs for %s/%s/%s: %w", namespace, podName, containerName, err)
+	}
+	return buf.String(), nil
 }

@@ -80,6 +80,8 @@ func (m *mockDockerAPI) RemoveNetwork(_ context.Context, _ string) error {
 	}
 	return m.netErr
 }
+func (m *mockDockerAPI) DisconnectFromNetwork(_ context.Context, _, _ string) error { return nil }
+func (m *mockDockerAPI) DisconnectNetworkEndpoints(_ context.Context, _ string) []string { return nil }
 func (m *mockDockerAPI) StartContainer(_ context.Context, _ docker.ContainerSpec) error {
 	if m.startErr == nil {
 		return nil
@@ -108,7 +110,7 @@ func (m *mockDockerAPI) ContainerList(_ context.Context, _ container.ListOptions
 	return nil, nil
 }
 func (m *mockDockerAPI) ContainerInspect(_ context.Context, _ string) (container.InspectResponse, error) {
-	return container.InspectResponse{}, nil
+	return container.InspectResponse{State: &container.State{Status: "exited", Running: false}}, nil
 }
 
 var _ docker.DockerAPI = (*mockDockerAPI)(nil)
@@ -360,9 +362,10 @@ func TestDownCore_StopError(t *testing.T) {
 	cli := newMockDocker()
 	cli.stopErr = errors.New("cannot stop")
 
+	// Stop errors are now best-effort: the force-remove still runs and the
+	// overall Down succeeds when remove succeeds.
 	err := stack.DownCore(context.Background(), cfg, cli, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot stop")
+	require.NoError(t, err)
 }
 
 func TestDownCore_RemoveContainerError(t *testing.T) {
@@ -371,9 +374,9 @@ func TestDownCore_RemoveContainerError(t *testing.T) {
 	cli := newMockDocker()
 	cli.removeErr = errors.New("cannot remove")
 
+	// Container remove errors are non-fatal (best-effort); down succeeds overall.
 	err := stack.DownCore(context.Background(), cfg, cli, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot remove")
+	require.NoError(t, err)
 }
 
 func TestDownCore_RemoveNetworkError(t *testing.T) {

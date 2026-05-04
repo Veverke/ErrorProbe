@@ -32,6 +32,8 @@ func (s *listDockerStub) ContainerID(_ context.Context, _ string) (string, error
 func (s *listDockerStub) NetworkExists(_ context.Context, _ string) (bool, error)        { return false, nil }
 func (s *listDockerStub) CreateNetwork(_ context.Context, _ string) error                { return nil }
 func (s *listDockerStub) RemoveNetwork(_ context.Context, _ string) error                { return nil }
+func (s *listDockerStub) DisconnectFromNetwork(_ context.Context, _, _ string) error      { return nil }
+func (s *listDockerStub) DisconnectNetworkEndpoints(_ context.Context, _ string) []string      { return nil }
 func (s *listDockerStub) VolumeExists(_ context.Context, _ string) (bool, error)         { return false, nil }
 func (s *listDockerStub) CreateVolume(_ context.Context, _ string) error                 { return nil }
 func (s *listDockerStub) RemoveVolume(_ context.Context, _ string) error                 { return nil }

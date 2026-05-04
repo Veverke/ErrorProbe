@@ -59,6 +59,12 @@ func (s *stubDockerForReconciler) NetworkExists(_ context.Context, _ string) (bo
 }
 func (s *stubDockerForReconciler) CreateNetwork(_ context.Context, _ string) error { return nil }
 func (s *stubDockerForReconciler) RemoveNetwork(_ context.Context, _ string) error { return nil }
+func (s *stubDockerForReconciler) DisconnectFromNetwork(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *stubDockerForReconciler) DisconnectNetworkEndpoints(_ context.Context, _ string) []string {
+	return nil
+}
 func (s *stubDockerForReconciler) VolumeExists(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }

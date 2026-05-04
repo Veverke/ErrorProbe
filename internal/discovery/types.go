@@ -24,9 +24,10 @@ type ContainerMeta struct {
 	Mounts       []MountInfo // volumes and bind mounts attached to the container (Docker only)
 
 	// K8s-specific fields (zero-valued for Docker containers).
-	Pod       string // pod name
-	Namespace string // Kubernetes namespace
-	Node      string // node the pod is scheduled on
+	Pod         string // pod name
+	Namespace   string // Kubernetes namespace
+	Node        string // node the pod is scheduled on
+	PrevExitMsg string // last error line from previous container instance (K8s only, set on restart)
 }
 
 // WatchSet is the approved set of containers at a point in time.

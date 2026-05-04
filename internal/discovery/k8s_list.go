@@ -68,7 +68,7 @@ func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Confi
 			out = append(out, ContainerMeta{
 				// ID is synthetic: namespace/pod/container — unique within cluster.
 				ID:           pod.Namespace + "/" + pod.Name + "/" + c.Name,
-				Name:         pod.Name + "/" + c.Name,
+				Name:         c.Name,
 				Image:        c.Image,
 				Labels:       pod.Labels,
 				StartedAt:    c.StartedAt,

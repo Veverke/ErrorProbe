@@ -109,7 +109,26 @@ func (f *fakeSDK) ContainerInspect(_ context.Context, name string) (container.In
 func (f *fakeSDK) ContainerKill(_ context.Context, _ string, _ string) error { return f.killErr }
 
 func (f *fakeSDK) ContainerList(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
-	return f.containerList, f.listErr
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	// If containerList was set explicitly, honour it (used by discovery tests).
+	if f.containerList != nil {
+		return f.containerList, nil
+	}
+	// Build a list from the containers map; only include running containers.
+	// This makes ContainerRunning work without callers needing to pre-populate containerList.
+	var out []container.Summary
+	for name, c := range f.containers {
+		if c.running {
+			out = append(out, container.Summary{
+				ID:    c.id,
+				Names: []string{"/" + name},
+				State: "running",
+			})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSDK) ContainerCreate(_ context.Context, _ *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, name string) (container.CreateResponse, error) {
@@ -153,6 +172,15 @@ func (f *fakeSDK) ContainerRemove(_ context.Context, name string, _ container.Re
 
 func (f *fakeSDK) NetworkConnect(_ context.Context, _, _ string, _ *network.EndpointSettings) error {
 	return f.connectErr
+}
+
+func (f *fakeSDK) NetworkDisconnect(_ context.Context, _, _ string, _ bool) error { return nil }
+
+func (f *fakeSDK) NetworkInspect(_ context.Context, name string, _ network.InspectOptions) (network.Inspect, error) {
+	if _, ok := f.networks[name]; !ok {
+		return network.Inspect{}, errdefs.ErrNotFound
+	}
+	return network.Inspect{Name: name}, nil
 }
 
 func (f *fakeSDK) NetworkList(_ context.Context, _ network.ListOptions) ([]network.Summary, error) {
@@ -622,13 +650,23 @@ func (f *fakeSDKWithListErrors) VolumeList(_ context.Context, _ volume.ListOptio
 	return f.fakeSDK.VolumeList(context.Background(), volume.ListOptions{})
 }
 
-func TestContainerRunning_InspectError(t *testing.T) {
+// fakeSDKWithListError returns an error from ContainerList.
+type fakeSDKWithListError struct {
+	*fakeSDK
+	listErr error
+}
+
+func (f *fakeSDKWithListError) ContainerList(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
+	return nil, f.listErr
+}
+
+func TestContainerRunning_ListError(t *testing.T) {
 	f := newFakeSDK()
-	f2 := &fakeSDKWithContainerError{fakeSDK: f, containerErr: errors.New("inspect failed")}
+	f2 := &fakeSDKWithListError{fakeSDK: f, listErr: errors.New("list failed")}
 	c := docker.NewTestClient(f2)
 	_, err := c.ContainerRunning(context.Background(), "loki")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "inspecting container")
+	assert.Contains(t, err.Error(), "listing container")
 }
 
 func TestContainerID_InspectError(t *testing.T) {

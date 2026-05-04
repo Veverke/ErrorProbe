@@ -26,6 +26,11 @@ func (s *stubK8sAPI) IsAvailable(ctx context.Context) bool {
 func (s *stubK8sAPI) ListPods(_ context.Context) ([]k8s.PodInfo, error) {
 	return s.pods, s.listErr
 }
+func (s *stubK8sAPI) ApplyVectorDaemonSet(_ context.Context, _, _ string) error { return nil }
+func (s *stubK8sAPI) DeleteVectorDaemonSet(_ context.Context) error              { return nil }
+func (s *stubK8sAPI) GetPreviousLogs(_ context.Context, _, _, _ string, _ int) (string, error) {
+	return "", nil
+}
 
 func emptyCfg() *config.Config { return &config.Config{} }
 

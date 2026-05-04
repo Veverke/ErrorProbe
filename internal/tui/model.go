@@ -182,17 +182,24 @@ func (m Model) View() string {
 	infraState := make(map[string]string, len(m.ws.Containers))
 	containerRuntime := make(map[string]string, len(m.ws.Containers))
 	containerSubtitle := make(map[string]string, len(m.ws.Containers))
+	restartCount := make(map[string]int, len(m.ws.Containers))
+	prevExitMsg := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
-		infraState[c.Name] = c.InfraStatus
-		containerRuntime[c.Name] = c.Runtime
+		key := normaliseContainerName(c.Name)
+		infraState[key] = c.InfraStatus
+		containerRuntime[key] = c.Runtime
+		restartCount[key] = c.RestartCount
+		if c.PrevExitMsg != "" {
+			prevExitMsg[key] = c.PrevExitMsg
+		}
 		if c.Runtime == "k8s" && (c.Pod != "" || c.Namespace != "") {
-			containerSubtitle[c.Name] = c.Pod + "  ns=" + c.Namespace
+			containerSubtitle[key] = c.Pod + "  ns=" + c.Namespace
 		}
 	}
 
 	header := m.renderHeader(n)
 
-	// EKG color reflects overall health: green = all OK, yellow = has errors, red = failing.
+	// EKG color reflects overall health (log errors + infra state).
 	hasErrors := false
 	isFailing := false
 	for _, ch := range m.snap.Containers {
@@ -200,6 +207,16 @@ func (m Model) View() string {
 			isFailing = true
 		} else if ch.State == health.StateHasErrors {
 			hasErrors = true
+		}
+	}
+	for _, st := range infraState {
+		switch st {
+		case "failed", "error", "crashed", "terminating":
+			isFailing = true
+		case "restarting", "pending", "waiting":
+			if !isFailing {
+				hasErrors = true
+			}
 		}
 	}
 	ekgColor := lipgloss.Color("10") // bright green
@@ -211,7 +228,19 @@ func (m Model) View() string {
 	ekgSty := lipgloss.NewStyle().Foreground(ekgColor)
 	ekgRows := m.renderEKG(m.width)
 
-	col1W, col2W, col3W, col4W := 22, 20, 12, 22
+	const col2W, col3W = 20, 12
+	// Distribute remaining terminal width evenly between CONTAINER and LAST ERROR.
+	// Table format: │ col1 │ col2 │ col3 │ col4 │  →  5 borders + 8 spaces (1 each side per col)
+	termW := m.width
+	if termW <= 0 {
+		termW = 120
+	}
+	remain := termW - col2W - col3W - 13 // 5 │ + 8 spaces
+	if remain < 44 {
+		remain = 44
+	}
+	col1W := remain / 2
+	col4W := remain - col1W
 
 	padRight := func(s string, w int) string {
 		vis := lipgloss.Width(s)
@@ -220,25 +249,50 @@ func (m Model) View() string {
 		}
 		return s + strings.Repeat(" ", w-vis)
 	}
+	// truncPad truncates s to w runes (adding … if needed) then right-pads to exactly w.
+	truncPad := func(s string, w int) string {
+		runes := []rune(s)
+		if len(runes) > w {
+			s = string(runes[:w-1]) + "…"
+		}
+		vis := lipgloss.Width(s)
+		if vis < w {
+			s = s + strings.Repeat(" ", w-vis)
+		}
+		return s
+	}
 
-	colHeader := padRight("CONTAINER", col1W) + "  " +
-		padRight("FUNCTIONAL", col2W) + "  " +
-		padRight("INFRA", col3W) + "  " +
-		padRight("LAST ERROR", col4W)
+	bar := func(col string, w int) string { return " " + padRight(col, w) + " " }
+	colHeader := borderStyle.Render("│") + bar("[ CONTAINER ]", col1W) +
+		borderStyle.Render("│") + bar("[ STATUS ]", col2W) +
+		borderStyle.Render("│") + bar("[ INFRA ]", col3W) +
+		borderStyle.Render("│") + bar("[ LAST EVENT ]", col4W) +
+		borderStyle.Render("│")
 
-	rows := make([]string, 0, len(names)+6)
+	// Fixed top section: always visible regardless of terminal height.
+	fixedRows := make([]string, 0, len(header)+8)
 	for _, h := range header {
-		rows = append(rows, h)
+		fixedRows = append(fixedRows, h)
 	}
 	if m.statusMsg != "" {
-		rows = append(rows, statusErrStyle.Render("⚠ "+m.statusMsg))
+		fixedRows = append(fixedRows, statusErrStyle.Render("⚠ "+m.statusMsg))
 	}
 	for _, row := range ekgRows {
-		rows = append(rows, ekgSty.Render(row))
+		fixedRows = append(fixedRows, ekgSty.Render(row))
 	}
-	rows = append(rows, borderStyle.Render(repeat("─", 82)))
-	rows = append(rows, colHeader)
-	rows = append(rows, borderStyle.Render(repeat("─", 82)))
+	// sepW = total visible width of the table including borders and padding
+	sepW := 1 + (col1W + 2) + 1 + (col2W + 2) + 1 + (col3W + 2) + 1 + (col4W + 2) + 1
+	hline := func(left, mid, right, fill string) string {
+		return borderStyle.Render(
+			left + repeat(fill, col1W+2) +
+				mid + repeat(fill, col2W+2) +
+				mid + repeat(fill, col3W+2) +
+				mid + repeat(fill, col4W+2) +
+				right)
+	}
+	fixedRows = append(fixedRows, hline("┌", "┬", "┐", "─"))
+	fixedRows = append(fixedRows, colHeader)
+	fixedRows = append(fixedRows, hline("├", "┼", "┤", "─"))
 
 	// Detect whether we have both runtimes for section headers.
 	hasDocker, hasK8s := false, false
@@ -253,6 +307,10 @@ func (m Model) View() string {
 	showSectionHeaders := hasDocker && hasK8s
 	lastRuntime := ""
 
+	// Scrollable content: container rows clipped to the available height.
+	contentRows := make([]string, 0, len(names)*2)
+	cursorStartLine := 0
+
 	for i, name := range names {
 		rt := containerRuntime[name]
 		if rt == "" {
@@ -261,12 +319,21 @@ func (m Model) View() string {
 
 		// Emit runtime section header when both runtimes are present.
 		if showSectionHeaders && rt != lastRuntime {
-			label := "── docker ──────────────────────────────────────────────────────────────────────"
+			var prefix string
 			if rt == "k8s" {
-				label = "── kubernetes ──────────────────────────────────────────────────────────────────"
+				prefix = "── kubernetes "
+			} else {
+				prefix = "── docker "
 			}
-			rows = append(rows, dimStyle.Render(label))
+			// span full table width; sepW includes the outer │ borders
+			inner := sepW - 2
+			label := "│" + prefix + repeat("─", inner-len([]rune(prefix))) + "│"
+			contentRows = append(contentRows, dimStyle.Render(label))
 			lastRuntime = rt
+		}
+
+		if i == m.cursor {
+			cursorStartLine = len(contentRows)
 		}
 
 		ch := m.snap.Containers[name]
@@ -298,41 +365,165 @@ func (m Model) View() string {
 				lastErr = "—"
 			}
 		default:
-			funcText = "✓ OK"
-			funcStyled = okStyle.Render(funcText)
-			lastErr = "—"
+			// Even if no log errors recorded, flag infra-level problems in functional.
+			switch infra {
+			case "restarting":
+				funcText = "⚠ RESTARTING"
+				funcStyled = errStyle.Render(funcText)
+				if pem := prevExitMsg[name]; pem != "" {
+					lastErr = "prev: " + pem
+				} else {
+					lastErr = "infra restart"
+				}
+			case "failed", "error", "crashed", "terminating":
+				funcText = "⚠ INFRA " + strings.ToUpper(infra)
+				funcStyled = failStyle.Render(funcText)
+				lastErr = "infra: " + infra
+			default:
+				funcText = "✓ OK"
+				funcStyled = okStyle.Render(funcText)
+				lastErr = "—"
+			}
 		}
 
-		line := padRight(name, col1W) + "  " +
-			padRight(funcStyled, col2W+len(funcStyled)-len(funcText)) + "  " +
-			padRight(infra, col3W) + "  " +
-			padRight(lastErr, col4W)
-
+		cell := func(s string, w int) string { return " " + truncPad(s, w) + " " }
+		c1 := cell(name, col1W)
+		c2 := " " + padRight(funcStyled, col2W) + " "
+		// Color infra status: green=running, yellow=restarting/pending, red=error/failed/crashed/unknown
+		var infraStyled string
+		switch infra {
+		case "running":
+			infraStyled = okStyle.Render(infra)
+		case "restarting", "pending", "waiting":
+			infraStyled = errStyle.Render(infra)
+		case "unknown":
+			infraStyled = dimStyle.Render(infra)
+		default:
+			infraStyled = failStyle.Render(infra) // error, failed, crashed, terminating, etc.
+		}
+		c3 := " " + padRight(infraStyled, col3W) + " "
+		c4 := cell(lastErr, col4W)
+		sep := borderStyle.Render("│")
 		if i == m.cursor {
-			line = selectedBg.Render(line)
+			const selBg = "237"
+			// Use combined fg+bg styles so inner ANSI resets don't strip the background.
+			c1 = selectedBg.Render(c1)
+			var selFuncSty lipgloss.Style
+			switch ch.State {
+			case health.StateHasErrors:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(lipgloss.Color(selBg))
+			case health.StateFailing:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(selBg))
+			default:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color(selBg))
+			}
+			c2 = selFuncSty.Render(" " + truncPad(funcText, col2W) + " ")
+			var selInfraSty lipgloss.Style
+			switch infra {
+			case "running":
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color(selBg))
+			case "restarting", "pending", "waiting":
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(lipgloss.Color(selBg))
+			case "unknown":
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color(selBg))
+			default:
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(selBg))
+			}
+			c3 = selInfraSty.Render(" " + truncPad(infra, col3W) + " ")
+			c4 = selectedBg.Render(c4)
+			sep = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color(selBg)).Render("│")
 		}
-		rows = append(rows, line)
+		line := sep + c1 + sep + c2 + sep + c3 + sep + c4 + sep
+		contentRows = append(contentRows, line)
 
-		// K8s subtitle: pod + namespace.
-		if sub := containerSubtitle[name]; sub != "" {
-			rows = append(rows, dimStyle.Render("  "+sub))
-		}
-
-		// Expanded view: show full last error message or fingerprint detail.
+		// Expanded view: show full last error message, infra detail, or restart count.
 		if i == m.cursor && m.expanded {
-			if ch.State == health.StateHasErrors && ch.LastErrorMsg != "" {
-				rows = append(rows, dimStyle.Render("  "+ch.LastErrorMsg))
-			} else if ch.State == health.StateFailing {
+			var detail string
+			switch ch.State {
+			case health.StateHasErrors:
+				if ch.LastErrorMsg != "" {
+					detail = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+				} else {
+					detail = fmt.Sprintf("⚠  has errors (%d total, no message)", ch.ErrorCount)
+				}
+			case health.StateFailing:
 				if ch.DominantFingerprintCount > 0 {
-					rows = append(rows, dimStyle.Render(fmt.Sprintf("  same pattern %d×: %s", ch.DominantFingerprintCount, truncateRune(ch.LastErrorMsg, 60))))
+					detail = fmt.Sprintf("✗  same pattern %d×: %s", ch.DominantFingerprintCount, ch.LastErrorMsg)
 				} else if ch.LastErrorMsg != "" {
-					rows = append(rows, dimStyle.Render("  "+ch.LastErrorMsg))
+					detail = fmt.Sprintf("✗  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+				} else {
+					detail = "✗  failing (no message)"
+				}
+			default:
+				// Show infra detail even if no log errors.
+				rc := restartCount[name]
+				switch infra {
+				case "restarting":
+					pem := prevExitMsg[name]
+					if pem != "" {
+						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  prev exit: %s", rc, pem)
+					} else {
+						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  (no prev exit log)", rc)
+					}
+				case "failed", "error", "crashed", "terminating":
+					detail = fmt.Sprintf("✗  infra status: %s  restart count: %d", infra, rc)
+				default:
+					detail = fmt.Sprintf("✓  no errors recorded  infra: %s", infra)
 				}
 			}
+			// Append K8s pod/namespace subtitle when available.
+			if sub := containerSubtitle[name]; sub != "" {
+				detail += "  ·  " + sub
+			}
+			innerW := col1W + 2 + col2W + 2 + col3W + 2 + col4W + 2 // content width between outer │
+			detailRunes := []rune(detail)
+			if len(detailRunes) > innerW {
+				detail = string(detailRunes[:innerW-1]) + "…"
+			}
+			detailPadded := " " + detail + strings.Repeat(" ", innerW-lipgloss.Width(detail))
+			contentRows = append(contentRows, borderStyle.Render("│")+dimStyle.Render(detailPadded)+borderStyle.Render("│"))
 		}
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+	// Clip content rows to available height, scrolling to keep cursor visible.
+	// Reserve 1 row for the scroll indicator when content overflows.
+	maxContent := m.height - len(fixedRows)
+	if maxContent < 1 {
+		maxContent = 1
+	}
+	needScroll := len(contentRows) > maxContent
+	availH := maxContent
+	if needScroll {
+		availH = maxContent - 1
+		if availH < 1 {
+			availH = 1
+		}
+	}
+
+	scrollTop := 0
+	if len(contentRows) > availH {
+		if cursorStartLine >= availH {
+			scrollTop = cursorStartLine - availH + 1
+		}
+	}
+
+	end := scrollTop + availH
+	if end > len(contentRows) {
+		end = len(contentRows)
+	}
+
+	allRows := make([]string, 0, len(fixedRows)+availH+2)
+	allRows = append(allRows, fixedRows...)
+	allRows = append(allRows, contentRows[scrollTop:end]...)
+	if needScroll {
+		total := len(contentRows)
+		scrollLine := fmt.Sprintf("  ↑↓  %d–%d of %d", scrollTop+1, end, total)
+		allRows = append(allRows, hline("├", "┴", "┤", "─")+" "+dimStyle.Render(scrollLine))
+	} else {
+		allRows = append(allRows, hline("└", "┴", "┘", "─"))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, allRows...)
 }
 
 // renderHeader returns 1 or 2 lines depending on terminal width.
@@ -365,18 +556,20 @@ func (m Model) renderHeader(n int) []string {
 
 // sortedNames returns a deterministically ordered list of all container names
 // from both the health snapshot and the watch set, sorted by runtime then name.
+// Names in pod/container format (stale watch set data) are normalised to just
+// the container part.
 func (m Model) sortedNames() []string {
 	seen := make(map[string]struct{})
 	for n := range m.snap.Containers {
-		seen[n] = struct{}{}
+		seen[normaliseContainerName(n)] = struct{}{}
 	}
 	for _, c := range m.ws.Containers {
-		seen[c.Name] = struct{}{}
+		seen[normaliseContainerName(c.Name)] = struct{}{}
 	}
 	// Build runtime lookup.
 	rtByName := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
-		rtByName[c.Name] = c.Runtime
+		rtByName[normaliseContainerName(c.Name)] = c.Runtime
 	}
 	names := make([]string, 0, len(seen))
 	for n := range seen {
@@ -397,6 +590,14 @@ func (m Model) sortedNames() []string {
 		return names[i] < names[j]
 	})
 	return names
+}
+
+// normaliseContainerName strips the pod/ prefix from stale pod/container format names.
+func normaliseContainerName(name string) string {
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
 }
 
 // renderEKG returns a 4-row EKG frame by slicing a scrolling window over

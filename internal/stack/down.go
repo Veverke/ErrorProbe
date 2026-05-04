@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
+	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/logger"
@@ -31,42 +35,149 @@ func downCore(ctx context.Context, cfg *config.Config, cli docker.DockerAPI, pur
 	if onStatus == nil {
 		onStatus = func(string) {}
 	}
-	const stopTimeout = 10
 
-	// Stop and remove in reverse order.
-	for _, name := range []string{ContainerVector, ContainerGrafana, ContainerLoki} {
-		onStatus(fmt.Sprintf("stopping %s…", name))
-		if err := cli.StopContainer(ctx, name, stopTimeout); err != nil {
-			return err
+	// Kill the background 'ep up' process FIRST, before any Docker API calls.
+	// ep up polls Docker continuously; its in-flight requests saturate the
+	// named pipe on Docker Desktop / Windows, causing all our teardown calls
+	// to block and time out.
+	pidPath := cfg.StateDir() + "ep.pid"
+	res, killErr := pid.KillRunning(pidPath)
+	logger.Debug("ep up kill attempt",
+		"pid_file", pidPath,
+		"found", res.Found,
+		"pid", res.PID,
+		"killed", res.Killed,
+		"kill_err", res.KillErr,
+		"wait_err", res.WaitErr,
+		"err", killErr,
+	)
+	// Wait for the pipe to be ready for HEAVY container operations.
+	// Ping goes through a fast path in Docker Desktop and succeeds even when
+	// the container subsystem is blocked. ContainerList is in the same queue
+	// as kill/inspect/remove, so 3 consecutive successes means the pipe is
+	// genuinely unblocked for what we're about to do.
+	consecutive := 0
+	var lastList []container.Summary
+	for range 30 {
+		listCtx, listCancel := context.WithTimeout(ctx, 3*time.Second)
+		list, listErr := cli.ContainerList(listCtx, container.ListOptions{All: true})
+		listCancel()
+		if listErr == nil {
+			consecutive++
+			lastList = list
+			logger.Debug("container list ok", "count", len(list), "consecutive", consecutive)
+			if consecutive >= 3 {
+				break
+			}
+		} else {
+			consecutive = 0
+			lastList = nil
+			logger.Debug("container list failed", "err", listErr)
 		}
-		onStatus(fmt.Sprintf("removing %s…", name))
-		if err := cli.RemoveContainer(ctx, name, false); err != nil {
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
 		}
+	}
+	logger.Debug("pipe ready, starting teardown", "containers_visible", len(lastList))
+	for _, c := range lastList {
+		name := ""
+		if len(c.Names) > 0 {
+			name = c.Names[0]
+		}
+		id := c.ID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		logger.Debug("visible container", "name", name, "state", c.State, "status", c.Status, "id", id)
+	}
+
+	// Force-remove all containers concurrently.
+	//
+	// On this system, containerd is saturated by kubelet polling 28+ k8s
+	// containers. Any API call that goes through containerd (kill, inspect,
+	// stop) reliably times out. force=true on RemoveContainer asks Docker to
+	// kill+remove atomically in one request, holding the connection open until
+	// Docker is done — no separate kill or inspect polling needed.
+	//
+	// We use a 15-minute per-container timeout via a derived context so that
+	// Ctrl-C (parent ctx) still cancels. All three fire concurrently so the
+	// wall-clock total is also bounded by 15 minutes.
+	onStatus("removing containers…")
+	{
+		var (
+			wg  sync.WaitGroup
+			mu  sync.Mutex
+			now = time.Now()
+		)
+		for _, name := range []string{ContainerGrafana, ContainerLoki, ContainerVector} {
+			wg.Add(1)
+			go func(name string) {
+				defer wg.Done()
+				removeCtx, removeCancel := context.WithTimeout(ctx, 15*time.Minute)
+				err := cli.RemoveContainer(removeCtx, name, true)
+				removeCancel()
+				elapsed := time.Since(now).Round(time.Millisecond)
+				logger.Debug("force remove done", "container", name, "elapsed", elapsed, "err", err)
+				if err != nil && !strings.Contains(err.Error(), "No such container") {
+					mu.Lock()
+					onStatus("⚠ " + err.Error())
+					mu.Unlock()
+				}
+			}(name)
+		}
+		wg.Wait()
 	}
 
 	// Remove the shared network.
-	onStatus(fmt.Sprintf("removing network %s…", NetworkName))
-	if err := cli.RemoveNetwork(ctx, NetworkName); err != nil {
-		return err
+	// On Docker Desktop / Windows, force-removing a container is asynchronous:
+	// the container process is killed but HNS endpoint cleanup takes 15-30 s per
+	// container. Poll for up to 60 s, re-disconnecting endpoints on each attempt.
+	onStatus(fmt.Sprintf("removing network %s\u2026", NetworkName))
+	var netErr error
+	for attempt := 0; attempt < 60; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(1 * time.Second):
+			}
+		}
+		// Re-inspect and disconnect on every attempt: Docker Desktop cleans up
+		// one container at a time, so new endpoints become removable gradually.
+		discCtx, discCancel := context.WithTimeout(ctx, 5*time.Second)
+		endpoints := cli.DisconnectNetworkEndpoints(discCtx, NetworkName)
+		discCancel()
+		if len(endpoints) > 0 {
+			logger.Debug("disconnected network endpoints", "attempt", attempt, "endpoints", endpoints)
+		}
+
+		netCtx, netCancel := context.WithTimeout(ctx, 5*time.Second)
+		netErr = cli.RemoveNetwork(netCtx, NetworkName)
+		netCancel()
+		if netErr == nil || !strings.Contains(netErr.Error(), "active endpoints") {
+			break
+		}
+	}
+	if netErr != nil {
+		return netErr
 	}
 
 	// Optionally purge data volumes.
 	if purge {
 		for _, vol := range []string{VolumeLokiData, VolumeGrafanaData} {
 			onStatus(fmt.Sprintf("removing volume %s…", vol))
-			if err := cli.RemoveVolume(ctx, vol); err != nil {
-				return err
+			volCtx, volCancel := context.WithTimeout(ctx, 10*time.Second)
+			volErr := cli.RemoveVolume(volCtx, vol)
+			volCancel()
+			if volErr != nil {
+				return volErr
 			}
 		}
 
 		// Remove the user profile directory (~/.errorprobe/).
-		// First kill any running 'ep up' process so its log handle is released.
 		dataDir := cfg.DataDir()
-		pidPath := cfg.StateDir() + "ep.pid"
-		if err := pid.KillRunning(pidPath); err != nil {
-			return fmt.Errorf("stopping ep up process: %w", err)
-		}
 		onStatus(fmt.Sprintf("removing user profile data at %s", dataDir))
 		logger.Close() // release this process's own log handle
 		if err := os.RemoveAll(dataDir); err != nil {

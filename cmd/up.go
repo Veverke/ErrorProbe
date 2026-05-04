@@ -38,15 +38,14 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 
-		onStatus := func(msg string) {
-			logger.Info(msg)
-		}
+		prog := newCmdProgress()
+		onStatus := prog.OnStatus()
 
 		if err := stack.Up(cmd.Context(), cfg, onStatus); err != nil {
+			prog.Done()
 			return fmt.Errorf("starting stack: %w", err)
 		}
-
-		// Start reconciler — stays running until SIGINT/SIGTERM.
+		prog.Done()
 		cli, err := docker.NewClient()
 		if err != nil {
 			return fmt.Errorf("connecting to docker for reconciler: %w", err)
@@ -124,6 +123,16 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		if k8sErr == nil {
 			k8sClient = k8cCli
 			logger.Info("kubernetes cluster detected — K8s discovery enabled")
+
+			// Apply Vector DaemonSet inside the cluster so it can read pod logs.
+			vectorCfgTOML, cfgErr := configgen.VectorK8sConfig(cfg)
+			if cfgErr != nil {
+				logger.Error("could not render vector-k8s config", "err", cfgErr)
+			} else if dsErr := k8cCli.ApplyVectorDaemonSet(ctx, cfg.Stack.Vector.Image, vectorCfgTOML); dsErr != nil {
+				logger.Error("could not apply vector daemonset", "err", dsErr)
+			} else {
+				logger.Info("vector daemonset applied")
+			}
 		} else {
 			logger.Info("kubernetes cluster not available — K8s discovery disabled")
 		}
