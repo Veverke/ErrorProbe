@@ -101,6 +101,11 @@ rules:
 
 ### Default built-in rules (shipped, lowest priority, overridable)
 
+Two default policies are shipped out of the box:
+
+1. **Error/Failing state** — log-plane rules that classify containers as `HAS_ERRORS` (any error/warn event) or `FAILING` (error rate exceeds threshold).
+2. **Restarting state** — infra-plane rule that classifies a K8s container as `RESTARTING` when it has recent restarts within a short uptime window.
+
 ```yaml
 rules:
   - name: builtin-log-error
