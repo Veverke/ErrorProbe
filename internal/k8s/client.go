@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -152,6 +153,11 @@ func (c *Client) GetPreviousLogs(ctx context.Context, namespace, podName, contai
 	})
 	stream, err := req.Stream(ctx)
 	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			// Pod no longer exists (e.g. terminated during a rolling restart).
+			// Treat as "no previous logs available".
+			return "", nil
+		}
 		return "", fmt.Errorf("streaming previous logs for %s/%s/%s: %w", namespace, podName, containerName, err)
 	}
 	defer stream.Close()

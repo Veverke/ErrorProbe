@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/k8s"
@@ -16,10 +17,12 @@ var defaultExcludeNamespaces = []string{
 	"kube-node-lease",
 }
 
-// restartingThreshold is the minimum RestartCount that causes a container to be
-// reported as infraStatus "restarting". Set to 1 to flag any restart; raise the
-// value (e.g. 3) to tolerate pods that restart once after a rolling deploy.
-const restartingThreshold = 1
+// recentRestartWindow is how long after the current container instance started
+// that a non-zero RestartCount is considered an active restart event.
+// Once a container has been running stably beyond this window, infraStatus
+// reverts to "running" — avoiding false RESTARTING for pods that restarted
+// once long ago (e.g. during a rolling deploy).
+const recentRestartWindow = 2 * time.Minute
 
 // ListRunningK8s returns ContainerMeta for every running container in every
 // running pod, across all non-system namespaces.
@@ -59,9 +62,10 @@ func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Confi
 			}
 
 			infraStatus := "running"
-			if c.RestartCount >= restartingThreshold {
-				// Treat any nonzero restart count as "restarting"; this is
-				// informational only — health state comes from log events.
+			if c.RestartCount > 0 && !c.StartedAt.IsZero() && time.Since(c.StartedAt) < recentRestartWindow {
+				// Only flag as restarting when the current instance is fresh AND has
+				// a non-zero restart count — i.e. it crashed recently. Containers
+				// that restarted long ago (cumulative count) are considered stable.
 				infraStatus = "restarting"
 			}
 
