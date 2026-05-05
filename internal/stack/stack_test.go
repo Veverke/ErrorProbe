@@ -110,7 +110,7 @@ func (m *mockDockerAPI) ContainerList(_ context.Context, _ container.ListOptions
 	return nil, nil
 }
 func (m *mockDockerAPI) ContainerInspect(_ context.Context, _ string) (container.InspectResponse, error) {
-	return container.InspectResponse{State: &container.State{Status: "exited", Running: false}}, nil
+	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{State: &container.State{Status: "exited", Running: false}}}, nil
 }
 
 var _ docker.DockerAPI = (*mockDockerAPI)(nil)

@@ -131,7 +131,6 @@ Use --runtime docker or --runtime k8s to filter by runtime.`,
 			if listCompactFlag {
 				name = compactContainerName(name)
 				pod = compactPodName(pod)
-				ns = ns // namespace kept as-is
 			}
 			rows = append(rows, tableRow{cells: []string{
 				c.Runtime, name, pod, ns, c.InfraStatus, watching,
