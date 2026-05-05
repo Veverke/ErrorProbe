@@ -52,6 +52,198 @@ from the start (matched rule name returned alongside the state).
 
 ---
 
+## Examples
+
+These examples show how PBR rules translate real-world scenarios into configuration,
+and how the evaluator resolves them.
+
+### Example 1 — Default behaviour (no user rules)
+
+A K8s container named `api` emits an `error`-level log event. The built-in rules apply:
+
+1. Evaluator checks `builtin-failing` (priority 110): `count_in_window >= 5` — not met. Skip.
+2. Evaluator checks `builtin-log-error` (priority 100): `level == error` — **match**.
+3. State set to `HAS_ERRORS`. Rule name `builtin-log-error` recorded.
+
+Same container has restarted twice and its uptime is 90 seconds:
+
+1. Evaluator checks `builtin-k8s-restarting` (priority 100): `restart_count > 0` ✓, `uptime < 2m` ✓ — **match**.
+2. `infraStatus` set to `RESTARTING`.
+
+---
+
+### Example 2 — Overriding the error level convention
+
+A team uses `CRITICAL` instead of `error` as their log level. They suppress the built-in
+error rule and add their own at a higher priority:
+
+```yaml
+rules:
+  - name: critical-is-error
+    priority: 200
+    match: log
+    when:
+      level: CRITICAL
+    set_state: HAS_ERRORS
+
+  - name: suppress-builtin-warn
+    priority: 150
+    match: log
+    when:
+      level: warn
+    set_state: OK          # treat warn as non-issue
+```
+
+When a `warn`-level event arrives: `suppress-builtin-warn` fires first (150 > 100),
+state is set to `OK`. The built-in `builtin-log-warn` (priority 90) is never reached.
+
+---
+
+### Example 3 — Scoping a rule to a specific namespace
+
+Flag errors only in the `production` namespace; ignore the same pattern in `staging`:
+
+```yaml
+rules:
+  - name: prod-errors-only
+    priority: 200
+    match: log
+    when:
+      level: error
+      namespace: production
+    set_state: HAS_ERRORS
+
+  - name: staging-errors-suppressed
+    priority: 190
+    match: log
+    when:
+      level: error
+      namespace: staging
+    set_state: OK
+```
+
+An `error` event from `staging/worker`: rule at 190 matches → `OK`. The built-in at 100
+is never evaluated.
+
+---
+
+### Example 4 — Custom FAILING threshold
+
+The built-in FAILING rule triggers at 5 errors in 3 minutes. A team wants 10 errors in
+5 minutes:
+
+```yaml
+rules:
+  - name: custom-failing
+    priority: 120          # higher than builtin-failing (110)
+    match: log
+    when:
+      level: error
+      count_in_window: ">= 10"
+      window: 5m
+    set_state: FAILING
+```
+
+Because `custom-failing` has priority 120, it is evaluated before `builtin-failing`
+(110). If the count is between 5 and 9, `custom-failing` does not match; `builtin-failing`
+then fires and sets `FAILING` at the lower threshold. To fully replace the built-in
+threshold, add a rule that prevents the built-in from ever matching:
+
+```yaml
+  - name: suppress-builtin-failing
+    priority: 115
+    match: log
+    when:
+      level: error
+      count_in_window: ">= 5"
+      window: 3m
+    set_state: HAS_ERRORS   # treat the old threshold as HAS_ERRORS, not FAILING
+```
+
+---
+
+### Example 5 — Tolerating a known-acceptable fault (suppression rules)
+
+Real-world configs combine N error-surfacing rules with M toleration rules (M < N).
+A toleration rule must be **more specific** than the error rule it overrides — it fires
+only on the exact known-acceptable pattern; everything else falls through to the
+error-surfacing rules unchanged.
+
+**Wrong** — blanket suppression, silences the container entirely:
+
+```yaml
+  - name: batch-job-restarts-ok   # BAD: too broad
+    priority: 200
+    match: infra
+    when:
+      container: batch-job        # matches ALL infra events for this container
+    set_state: OK
+```
+
+**Correct** — narrow toleration, only intercepts the known acceptable condition:
+
+```yaml
+rules:
+  # Error-surfacing rule (broad, lower priority)
+  - name: k8s-restarting
+    priority: 100
+    match: infra
+    when:
+      runtime: k8s
+      restart_count: "> 0"
+      uptime: "< 2m"
+    set_state: RESTARTING
+
+  # Toleration rule (narrow, higher priority)
+  - name: batch-job-expected-restart
+    priority: 200
+    match: infra
+    when:
+      runtime: k8s
+      container: batch-job
+      restart_count: "> 0"
+      uptime: "< 2m"
+    set_state: OK
+```
+
+`batch-job` restarting after a normal run → toleration rule fires → `OK`.  
+`batch-job` crash-looping with unexpected restarts at uptime > 2m → neither rule matches
+→ default `running` (no false alarm, but also not suppressed by the toleration rule).  
+Any *other* container restarting within 2m → toleration rule does not match (wrong
+container) → `k8s-restarting` fires → `RESTARTING`.
+
+The same principle applies on the log plane: scope toleration rules with a `message`
+regex or additional field conditions so they intercept only the known pattern, not all
+events of that level from the container.
+
+### Narrowing conditions in toleration rules
+
+Any `when` field can serve as a narrowing condition — not just `container` and `message`.
+The full vocabulary per plane is:
+
+**Log plane:** `level`, `message` (regex), `container`, `namespace`, `runtime`,
+`count_in_window` + `window`
+
+**Infra plane:** `container`, `namespace`, `runtime`, `restart_count`, `uptime`, `phase`
+
+Common narrowing combinations:
+
+| Narrowing field | Use case |
+|---|---|
+| `container` | Isolate a specific workload |
+| `message: ~<regex>` | Intercept a known log pattern within a noisy container |
+| `namespace` | Tolerate in `staging`, surface in `production` |
+| `restart_count: "<= N"` | Tolerate up to N restarts but not more |
+| `phase: Pending` + `uptime: "< 5m"` | Allow a pod time to start during rollout |
+
+The rule of thumb: a toleration rule should repeat **all** conditions of the error rule it
+overrides, then add one or more narrowing fields that identify the acceptable case. A
+toleration rule that carries only narrowing fields — and none of the error rule's
+conditions — is the blanket-suppression anti-pattern and will silence the container
+regardless of what happens to it.
+
+---
+
 ## Rule Schema
 
 ```yaml
@@ -168,9 +360,7 @@ internal/pbr/
 
 #### `internal/config`
 
-Add `Rules []RuleConfig` to `Config`. Existing `Detection` and `Containers` fields remain
-for backward compatibility during transition; they are mapped to built-in rules at load
-time.
+Add `Rules []RuleConfig` to `Config`.
 
 ```go
 type RuleConfig struct {
@@ -199,15 +389,6 @@ reduced to a thin scheduler.
 
 Remove hardcoded `infraStatus = "restarting"` block. Call
 `pbr.Evaluate(rules, InfraEvalContext{containerMeta})` to obtain `infraStatus`.
-
----
-
-## Config file migration
-
-Old config fields (`detection.severity_patterns`, `detection.tier2`) remain parseable.
-On load, `pbr.Loader` translates them into equivalent rules at priority < 100 (below
-built-ins). A deprecation warning is logged at startup if the old fields are present.
-This gives existing users a non-breaking upgrade path.
 
 ---
 
@@ -259,14 +440,6 @@ Tasks are grouped by dependency tier. All tasks within a tier are independent.
 
 #### T2.1 — Add `Rules []RuleConfig` to `internal/config`
 - New field on `Config`; zero value = empty slice (built-ins apply)
-- Existing `Detection` fields remain; loader translates them to rules for backward compat
-
-#### T2.2 — Backward-compat migration in loader
-- If `detection.severity_patterns.error` non-empty: generate `match: log` rules at
-  priority 50 (below built-ins) mapping each pattern to `HAS_ERRORS`
-- If `detection.tier2` non-empty: generate a `match: log` + `count_in_window` rule at
-  priority 55
-- Log deprecation warning once at startup if either old field is present
 
 ---
 
@@ -326,7 +499,6 @@ Tasks are grouped by dependency tier. All tasks within a tier are independent.
 - Unknown set_state → error
 - Unknown field for match context → error
 - Valid config → sorted rule slice
-- Backward-compat: detection.tier2 → equivalent rule generated
 
 #### T5.4 — Integration: health engine with PBR rules
 - Engine with custom rules classifies log events per rule, not hardcoded level check
