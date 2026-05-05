@@ -179,7 +179,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stack.grafana.port", 3000)
 	v.SetDefault("stack.ingest.transport", "http")
 	v.SetDefault("stack.ingest.port", 9099)
-	v.SetDefault("stack.ingest.bind", "0.0.0.0")
+	v.SetDefault("stack.ingest.bind", "127.0.0.1")
 	v.SetDefault("detection.severity_patterns.error", []string{"ERROR", "FATAL", "panic", "Exception", "error"})
 	v.SetDefault("detection.severity_patterns.warn", []string{"WARN", "WARNING", "warn"})
 	v.SetDefault("detection.tier2.window", "3m")

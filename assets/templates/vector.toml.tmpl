@@ -5,14 +5,19 @@
 [sources.docker_logs]
 type = "docker_logs"
 include_containers = [{{range $i, $c := .DockerContainers}}{{if $i}}, {{end}}"{{$c}}"{{end}}]
-{{- else}}
+{{- end}}
+{{- if .K8sContainers}}
+[sources.kubernetes_logs]
+type = "kubernetes_logs"
+{{- end}}
+{{- if not (or .DockerContainers .K8sContainers)}}
 [sources.internal_metrics]
 type = "internal_metrics"
 {{- end}}
 
 [transforms.normalize]
 type = "remap"
-inputs = [{{if .DockerContainers}}"docker_logs"{{else}}"internal_metrics"{{end}}]
+inputs = [{{range $i, $s := .Sources}}{{if $i}}, {{end}}"{{$s}}"{{end}}]
 source = '''
   # Preserve raw message
   raw = to_string(.message) ?? ""

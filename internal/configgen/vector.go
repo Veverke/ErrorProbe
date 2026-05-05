@@ -43,10 +43,22 @@ func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []str
 		return wrapErr("parsing vector template", err)
 	}
 
+	var sources []string
+	if len(dockerContainers) > 0 {
+		sources = append(sources, "docker_logs")
+	}
+	if len(k8sContainers) > 0 {
+		sources = append(sources, "kubernetes_logs")
+	}
+	if len(sources) == 0 {
+		sources = []string{"internal_metrics"}
+	}
+
 	data := struct {
 		DockerContainers []string
 		K8sContainers    []discovery.K8sContainerRef
 		UniqueNamespaces []string
+		Sources          []string
 		LokiHost         string
 		LokiPort         int
 		IngestEnabled    bool
@@ -58,6 +70,7 @@ func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []str
 		DockerContainers: dockerContainers,
 		K8sContainers:    k8sContainers,
 		UniqueNamespaces: uniqueNamespaces(k8sContainers),
+		Sources:          sources,
 		LokiHost:         "errorprobe-loki",
 		LokiPort:         cfg.Stack.Loki.Port,
 		IngestEnabled:    cfg.Stack.Ingest.Port > 0,
