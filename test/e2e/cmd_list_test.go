@@ -15,6 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// tablePrefix returns the first 27 runes of name — the visible portion when
+// the CONTAINER column (28 chars wide) truncates long names with an ellipsis.
+func tablePrefix(name string) string {
+	runes := []rune(name)
+	if len(runes) > 27 {
+		return string(runes[:27])
+	}
+	return name
+}
+
 // ---------------------------------------------------------------------------
 // TestCmd_List_DefaultTable (#7 extended)
 // ---------------------------------------------------------------------------
@@ -31,7 +41,7 @@ func TestCmd_List_DefaultTable(t *testing.T) {
 	assert.Contains(t, stdout, "CONTAINER", "header row must contain CONTAINER column")
 	assert.Contains(t, stdout, "STATUS", "header row must contain STATUS column")
 	assert.Contains(t, stdout, "WATCHING", "header row must contain WATCHING column")
-	assert.Contains(t, stdout, name, "stub container must appear in default table output")
+	assert.Contains(t, stdout, tablePrefix(name), "stub container must appear in default table output")
 	assert.Contains(t, stdout, "docker", "runtime column must show 'docker'")
 }
 
@@ -98,7 +108,7 @@ func TestCmd_List_Runtime_Docker(t *testing.T) {
 	stdout, _, exitCode := runEP(t, tempHome(t), "list", "--runtime", "docker")
 
 	require.Equal(t, 0, exitCode)
-	assert.Contains(t, stdout, name, "Docker container must appear with --runtime docker")
+	assert.Contains(t, stdout, tablePrefix(name), "Docker container must appear with --runtime docker")
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +123,7 @@ func TestCmd_List_Runtime_K8s(t *testing.T) {
 	stdout, _, exitCode := runEP(t, tempHome(t), "list", "--runtime", "k8s")
 
 	require.Equal(t, 0, exitCode, "--runtime k8s must exit 0 even when no K8s cluster is present")
-	assert.NotContains(t, stdout, name,
+	assert.NotContains(t, stdout, tablePrefix(name),
 		"Docker container must not appear under --runtime k8s filter")
 }
 
@@ -142,7 +152,7 @@ func TestCmd_List_Compact(t *testing.T) {
 
 	stdoutCompact, _, exitCode := runEP(t, tempHome(t), "list", "--compact")
 	require.Equal(t, 0, exitCode, "--compact must exit 0")
-	assert.Contains(t, stdoutCompact, name)
+	assert.Contains(t, stdoutCompact, tablePrefix(name))
 
 	stdoutFull, _, _ := runEP(t, tempHome(t), "list")
 	// Compact output must be no longer than (or equal to) full output since
