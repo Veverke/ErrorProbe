@@ -23,4 +23,13 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -race ./...
+        run: |
+          TOTAL=$(go test -list '.*' ./... 2>/dev/null | awk '/^Test[A-Za-z]/{n++} END{print n+0}')
+          go test -race -v ./... | awk -v total="$TOTAL" '/^--- (PASS|FAIL):/{n++; printf "%s [%d/%d]\n",$0,n,total; next}{print}'
+          exit ${PIPESTATUS[0]}
+
+      - name: Integration tests
+        run: |
+          TOTAL=$(go test -tags integration -list '.*' ./test/e2e/ 2>/dev/null | awk '/^Test[A-Za-z]/{n++} END{print n+0}')
+          go test -tags integration -race -timeout 25m -v ./test/e2e/ | awk -v total="$TOTAL" '/^--- (PASS|FAIL):/{n++; printf "%s [%d/%d]\n",$0,n,total; next}{print}'
+          exit ${PIPESTATUS[0]}

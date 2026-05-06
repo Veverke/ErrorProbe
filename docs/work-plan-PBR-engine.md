@@ -525,10 +525,65 @@ Tasks are grouped by dependency tier. All tasks within a tier are independent.
 
 ---
 
+---
+
+### Tier 7 — Rule hot-reload without restart (depends on T1–T4, T2.1)
+
+#### T7.1 — Classify `Rules` changes as soft in `stack.ClassifyChanges`
+- In `internal/stack`, add `Rules` to the soft-change fields checked by `ClassifyChanges`
+- A change in the rules slice should set `HasSoft = true` (no container recreation needed)
+
+#### T7.2 — Add a thread-safe rule-swap method to `Engine`
+- Add `SetRules(rules []pbr.Rule)` to `internal/health.Engine`
+- Guarded by the existing `sync.RWMutex`; replaces the stored rule slice atomically
+- Same pattern on the discovery reconciler: `Reconciler.SetRules(rules []pbr.Rule)`
+
+#### T7.3 — Wire reload into `cmd/reload.go`
+- After `stack.ClassifyChanges` detects a soft change, re-run `pbr.Load` with the new config
+- On **validation error**: log the error, keep the old rule set, return the error to the caller — do not swap
+- On success: call `Engine.SetRules` and `Reconciler.SetRules` with the new compiled rules
+- Save the new config to state only after a successful swap
+
+#### T7.4 — Unit tests
+- Reload with valid updated rules → new rules applied, old rules gone
+- Reload with invalid rules (duplicate priority) → old rules retained, error returned
+- `ClassifyChanges` with differing rules slice → `HasSoft = true`
+
+---
+
+### Tier 8 — Per-container rule overrides (depends on T1.4, T2.1)
+
+Per-container overrides are syntactic sugar over `when.container` conditions. The evaluator
+requires no changes; the loader injects the scoping condition automatically.
+
+#### T8.1 — Add `ContainerOverrides` to config
+- New field on `Config`:
+  ```go
+  ContainerOverrides map[string][]RuleConfig `mapstructure:"container_overrides"`
+  ```
+- Zero value (absent key) = no overrides for that container
+
+#### T8.2 — Expand overrides in loader
+- In `pbr.Load`, after parsing user rules, iterate `ContainerOverrides`
+- For each `container → []RuleConfig` entry, parse the rules normally then append a
+  synthetic `Condition{Field: "container", Operator: eq, Value: containerName}` to each
+  rule's condition list
+- Merged into the global rule slice; subject to the same priority-uniqueness validation
+- Priorities share the global namespace (simpler; avoids two-pass evaluation)
+
+#### T8.3 — Schema documentation update
+- Add `container_overrides` block to the rule schema section of this document with an
+  example showing a per-container suppression rule alongside its equivalent `when.container`
+  form
+
+#### T8.4 — Unit tests
+- Override rule fires only for the named container, not others
+- Override rule with duplicate priority against a global rule → validation error
+- Container with no override entry → unaffected by overrides block
+
+---
+
 ## Non-goals for this phase
 
 - GUI / web rule editor
-- Rule hot-reload without restart (rules are compiled at startup; `ep reload` handles this)
-- Per-container rule overrides (all rules apply to all containers; use `when.container`
-  conditions for scoping)
 - Alert routing / notification rules (separate concern)
