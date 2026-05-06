@@ -60,7 +60,11 @@ Use --runtime docker or --runtime k8s to filter by runtime.`,
 		// Attempt K8s discovery; silently skip if unavailable.
 		var k8sContainers []discovery.ContainerMeta
 		if k8cCli, k8sErr := k8s.NewClient(""); k8sErr == nil {
-			k8sContainers, _ = discovery.ListRunningK8s(cmd.Context(), k8cCli, cfg)
+			var k8sDiscErr error
+			k8sContainers, k8sDiscErr = discovery.ListRunningK8s(cmd.Context(), k8cCli, cfg)
+			if k8sDiscErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: K8s discovery failed: %v\n", k8sDiscErr)
+			}
 		}
 
 		merged := discovery.MergeContainers(dockerContainers, k8sContainers)

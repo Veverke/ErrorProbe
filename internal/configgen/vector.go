@@ -31,6 +31,27 @@ func uniqueNamespaces(refs []discovery.K8sContainerRef) []string {
 	return out
 }
 
+// namespacePods returns a map of namespace → sorted, deduplicated pod names from refs.
+func namespacePods(refs []discovery.K8sContainerRef) map[string][]string {
+	m := make(map[string]map[string]struct{}, len(refs))
+	for _, r := range refs {
+		if m[r.Namespace] == nil {
+			m[r.Namespace] = make(map[string]struct{})
+		}
+		m[r.Namespace][r.PodName] = struct{}{}
+	}
+	out := make(map[string][]string, len(m))
+	for ns, pods := range m {
+		sorted := make([]string, 0, len(pods))
+		for p := range pods {
+			sorted = append(sorted, p)
+		}
+		sort.Strings(sorted)
+		out[ns] = sorted
+	}
+	return out
+}
+
 // GenerateVector writes vector.toml to outputDir using the embedded template.
 // dockerContainers is the list of approved Docker container names.
 // k8sContainers is the list of K8s containers (pod name + namespace).
@@ -48,7 +69,7 @@ func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []str
 		sources = append(sources, "docker_logs")
 	}
 	if len(k8sContainers) > 0 {
-		sources = append(sources, "kubernetes_logs")
+		sources = append(sources, "k8s_filter")
 	}
 	if len(sources) == 0 {
 		sources = []string{"internal_metrics"}
@@ -58,6 +79,7 @@ func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []str
 		DockerContainers []string
 		K8sContainers    []discovery.K8sContainerRef
 		UniqueNamespaces []string
+		NamespacePods    map[string][]string
 		Sources          []string
 		LokiHost         string
 		LokiPort         int
@@ -70,6 +92,7 @@ func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []str
 		DockerContainers: dockerContainers,
 		K8sContainers:    k8sContainers,
 		UniqueNamespaces: uniqueNamespaces(k8sContainers),
+		NamespacePods:    namespacePods(k8sContainers),
 		Sources:          sources,
 		LokiHost:         "errorprobe-loki",
 		LokiPort:         cfg.Stack.Loki.Port,

@@ -9,6 +9,14 @@ include_containers = [{{range $i, $c := .DockerContainers}}{{if $i}}, {{end}}"{{
 {{- if .K8sContainers}}
 [sources.kubernetes_logs]
 type = "kubernetes_logs"
+
+[transforms.k8s_filter]
+type = "filter"
+inputs = ["kubernetes_logs"]
+condition = '''
+  {{- range $i, $ns := .UniqueNamespaces}}{{if $i}} ||
+  {{end}}(.kubernetes.pod_namespace == "{{$ns}}" && ({{range $j, $pod := index $.NamespacePods $ns}}{{if $j}} || {{end}}.kubernetes.pod_name == "{{$pod}}"{{end}})){{end}}
+'''
 {{- end}}
 {{- if not (or .DockerContainers .K8sContainers)}}
 [sources.internal_metrics]

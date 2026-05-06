@@ -176,6 +176,34 @@ func (c *Client) CountErrors(ctx context.Context, containerKey string, since tim
 	return total, nil
 }
 
+// QueryErrorMessages returns the raw log message strings for error-level events
+// for the given container within the given time window (measured from now).
+// It is used by the Tier2Evaluator to compute window-scoped fingerprint counts
+// without importing the health package.
+func (c *Client) QueryErrorMessages(ctx context.Context, containerKey string, since time.Duration) ([]string, error) {
+	var query string
+	if idx := strings.Index(containerKey, "/"); idx >= 0 {
+		namespace := containerKey[:idx]
+		container := containerKey[idx+1:]
+		query = fmt.Sprintf(`{container=%q,namespace=%q,level="error"}`, container, namespace)
+	} else {
+		query = fmt.Sprintf(`{container=%q,level="error"}`, containerKey)
+	}
+
+	start := time.Now().Add(-since)
+	end := time.Now()
+	lines, err := c.QueryRange(ctx, query, start, end, 5000, "forward")
+	if err != nil {
+		return nil, fmt.Errorf("querying Loki for error messages: %w", err)
+	}
+
+	msgs := make([]string, len(lines))
+	for i, l := range lines {
+		msgs[i] = l.Message
+	}
+	return msgs, nil
+}
+
 // durationToPromQL converts a Go duration to a Loki/PromQL duration string.
 // Examples: 3*time.Minute → "3m", 30*time.Second → "30s", time.Hour → "1h".
 func durationToPromQL(d time.Duration) string {

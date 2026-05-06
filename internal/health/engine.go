@@ -58,14 +58,16 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
 				changed = true
 			}
-			// Track fingerprints for Tier 2 detection.
-			e.snapshot.RecordFingerprint(key, Fingerprint(ev.Message))
+			if ev.Level == "error" {
+				// Track fingerprints for Tier 2 detection (error-level only).
+				e.snapshot.RecordFingerprint(key, Fingerprint(ev.Message))
+			}
 		}
 	}
 
 	if changed {
 		e.snapshot.SnapshotAt = time.Now()
-		snap := e.snapshot
+		snap := e.snapshot.DeepCopy()
 		if err := SaveSnapshot(e.snapshotPath, snap); err != nil {
 			// Log but do not crash; state is still in memory.
 			logger.Error("health engine: persist snapshot", "err", err)
@@ -87,11 +89,12 @@ func logEventKey(ev ingest.LogEvent) string {
 	return ev.Container
 }
 
-// Snapshot returns a thread-safe copy of the current health snapshot.
+// Snapshot returns a thread-safe deep copy of the current health snapshot.
+// The returned snapshot has no shared map references with the engine.
 func (e *Engine) Snapshot() HealthSnapshot {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.snapshot
+	return e.snapshot.DeepCopy()
 }
 
 // Reset clears the health state for the named container, persists and notifies.

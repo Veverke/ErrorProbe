@@ -95,9 +95,19 @@ func (h *HistoryLog) Prune(retention time.Duration) error {
 	if err := os.WriteFile(tmp, out, 0o644); err != nil {
 		return fmt.Errorf("writing pruned history: %w", err)
 	}
-	if err := os.Rename(tmp, h.path); err != nil {
+	if err := atomicReplace(h.path, tmp); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("replacing history file: %w", err)
 	}
 	return nil
+}
+
+// atomicReplace replaces dst with src. It removes dst first (ignoring
+// ErrNotExist) before renaming src into place, which is necessary on Windows
+// where os.Rename fails if the destination file already exists.
+func atomicReplace(dst, src string) error {
+	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(src, dst)
 }

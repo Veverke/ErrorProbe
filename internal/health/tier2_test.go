@@ -15,12 +15,20 @@ import (
 
 // mockLokiClient implements LokiQueryClient for testing.
 type mockLokiClient struct {
-	count int
-	err   error
+	count    int
+	err      error
+	messages []string
 }
 
 func (m *mockLokiClient) CountErrors(_ context.Context, _ string, _ time.Duration) (int, error) {
 	return m.count, m.err
+}
+
+func (m *mockLokiClient) QueryErrorMessages(_ context.Context, _ string, _ time.Duration) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.messages, nil
 }
 
 // buildTier2TestCfg returns a minimal config with the given threshold and window.
@@ -34,6 +42,15 @@ func buildTier2TestCfg(threshold int, window, tick string) *config.Config {
 			},
 		},
 	}
+}
+
+// repeatMessages returns a slice of n copies of msg for use as mock Loki query results.
+func repeatMessages(msg string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = msg
+	}
+	return out
 }
 
 // populateFingerprints drives the engine with n identical error events so the
@@ -71,7 +88,8 @@ func TestTier2Evaluator_ThresholdMet_TransitionsToFailing(t *testing.T) {
 	// 15 identical errors → dominant fingerprint count = 15 ≥ threshold 10
 	populateFingerprints(e, "api", "connection refused to postgres", 15)
 
-	loki := &mockLokiClient{count: 15} // ≥ threshold
+	msgs := repeatMessages("connection refused to postgres", 15)
+	loki := &mockLokiClient{count: 15, messages: msgs} // ≥ threshold
 	cfg := buildTier2TestCfg(10, "3m", "30s")
 	ev := NewTier2Evaluator(loki, cfg, e, nil)
 	ev.evaluate(context.Background())
@@ -87,7 +105,7 @@ func TestTier2Evaluator_RateDrops_RecoverToHasErrors(t *testing.T) {
 	populateFingerprints(e, "api", "disk full", 20)
 
 	// First tick: count ≥ threshold → FAILING
-	highLoki := &mockLokiClient{count: 20}
+	highLoki := &mockLokiClient{count: 20, messages: repeatMessages("disk full", 20)}
 	cfg := buildTier2TestCfg(10, "3m", "30s")
 	ev := NewTier2Evaluator(highLoki, cfg, e, nil)
 	ev.evaluate(context.Background())
@@ -109,7 +127,7 @@ func TestTier2Evaluator_AppendHistoryOnTransition(t *testing.T) {
 	histPath := filepath.Join(dir, "history.jsonl")
 	hist := NewHistoryLog(histPath)
 
-	loki := &mockLokiClient{count: 12}
+	loki := &mockLokiClient{count: 12, messages: repeatMessages("timeout connecting to cache", 12)}
 	cfg := buildTier2TestCfg(10, "3m", "30s")
 	ev := NewTier2Evaluator(loki, cfg, e, hist)
 	ev.evaluate(context.Background())
@@ -134,7 +152,8 @@ func TestTier2Evaluator_MultipleContainers_IndependentEvaluation(t *testing.T) {
 
 	// Loki returns 15 for highrate and 3 for lowrate.
 	callMap := map[string]int{"highrate": 15, "lowrate": 3}
-	loki := &mapMockLoki{counts: callMap}
+	msgMap := map[string][]string{"highrate": repeatMessages("out of memory", 15)}
+	loki := &mapMockLoki{counts: callMap, messages: msgMap}
 	cfg := buildTier2TestCfg(10, "3m", "30s")
 	ev := NewTier2Evaluator(loki, cfg, e, nil)
 	ev.evaluate(context.Background())
@@ -144,11 +163,19 @@ func TestTier2Evaluator_MultipleContainers_IndependentEvaluation(t *testing.T) {
 	assert.Equal(t, StateHasErrors, snap.Containers["lowrate"].State)
 }
 
-// mapMockLoki returns counts from a map keyed by container name.
+// mapMockLoki returns counts and messages from maps keyed by container name.
 type mapMockLoki struct {
-	counts map[string]int
+	counts   map[string]int
+	messages map[string][]string
 }
 
 func (m *mapMockLoki) CountErrors(_ context.Context, container string, _ time.Duration) (int, error) {
 	return m.counts[container], nil
+}
+
+func (m *mapMockLoki) QueryErrorMessages(_ context.Context, container string, _ time.Duration) ([]string, error) {
+	if m.messages != nil {
+		return m.messages[container], nil
+	}
+	return nil, nil
 }

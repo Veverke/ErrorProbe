@@ -33,13 +33,17 @@ type HealthSnapshot struct {
 
 // SetError upserts the container entry, flipping state to HAS_ERRORS and incrementing count.
 // FirstErrorAt is only set on the first error; LastErrorAt is always updated.
+// StateFailing is preserved — it can only be cleared by Tier2 recovery logic (Reset or an
+// explicit state transition).
 func (s *HealthSnapshot) SetError(name, msg string, at time.Time) {
 	if s.Containers == nil {
 		s.Containers = make(map[string]ContainerHealth)
 	}
 	ch := s.Containers[name]
 	ch.Name = name
-	ch.State = StateHasErrors
+	if ch.State != StateFailing {
+		ch.State = StateHasErrors
+	}
 	ch.ErrorCount++
 	ch.LastErrorMsg = msg
 	ch.LastUpdated = at
@@ -64,6 +68,27 @@ func (s *HealthSnapshot) RecordFingerprint(name, fingerprint string) {
 	}
 	ch.Fingerprints[fingerprint]++
 	s.Containers[name] = ch
+}
+
+// DeepCopy returns a new HealthSnapshot with an independent copy of the Containers map
+// and each ContainerHealth's Fingerprints map, so callers cannot accidentally share
+// mutable state with the engine.
+func (s HealthSnapshot) DeepCopy() HealthSnapshot {
+	cp := HealthSnapshot{
+		SnapshotAt: s.SnapshotAt,
+		Containers: make(map[string]ContainerHealth, len(s.Containers)),
+	}
+	for k, ch := range s.Containers {
+		if ch.Fingerprints != nil {
+			fps := make(map[string]int, len(ch.Fingerprints))
+			for fp, count := range ch.Fingerprints {
+				fps[fp] = count
+			}
+			ch.Fingerprints = fps
+		}
+		cp.Containers[k] = ch
+	}
+	return cp
 }
 
 // Reset sets the named container state back to OK and clears counts and timestamps.

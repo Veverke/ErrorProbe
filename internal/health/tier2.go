@@ -13,6 +13,7 @@ import (
 // *loki.Client satisfies this interface automatically.
 type LokiQueryClient interface {
 	CountErrors(ctx context.Context, container string, since time.Duration) (int, error)
+	QueryErrorMessages(ctx context.Context, containerKey string, since time.Duration) ([]string, error)
 }
 
 // Tier2Evaluator periodically queries Loki for error rates and transitions
@@ -71,7 +72,7 @@ func (e *Tier2Evaluator) evaluate(ctx context.Context) {
 	for name, ch := range snap.Containers {
 		switch ch.State {
 		case StateHasErrors:
-			e.evalHasErrors(ctx, name, ch, window, threshold)
+			e.evalHasErrors(ctx, name, window, threshold)
 		case StateFailing:
 			e.evalFailing(ctx, name, window, threshold)
 		}
@@ -79,7 +80,7 @@ func (e *Tier2Evaluator) evaluate(ctx context.Context) {
 }
 
 // evalHasErrors checks whether a HAS_ERRORS container should transition to FAILING.
-func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, ch ContainerHealth, window time.Duration, threshold int) {
+func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window time.Duration, threshold int) {
 	count, err := e.loki.CountErrors(ctx, name, window)
 	if err != nil {
 		logger.Error("tier2: count errors", "container", name, "err", err)
@@ -89,8 +90,18 @@ func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, ch Cont
 		return
 	}
 
-	// Find the dominant fingerprint from the in-memory accumulation.
-	dominant, domCount := dominantFingerprint(ch.Fingerprints)
+	// Query Loki for the actual error messages within the window to derive
+	// window-scoped fingerprint counts (avoids stale cumulative in-memory counts).
+	msgs, err := e.loki.QueryErrorMessages(ctx, name, window)
+	if err != nil {
+		logger.Error("tier2: query error messages", "container", name, "err", err)
+		return
+	}
+	fpCounts := make(map[string]int, len(msgs))
+	for _, m := range msgs {
+		fpCounts[Fingerprint(m)]++
+	}
+	dominant, domCount := dominantFingerprint(fpCounts)
 	if domCount < threshold {
 		return
 	}
