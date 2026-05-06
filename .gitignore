@@ -1,6 +1,8 @@
-# Binaries
-errorprobe
-errorprobe.exe
+# Binaries (root-level only — /cmd/* directories must not be matched)
+/errorprobe
+/errorprobe.exe
+/ep
+/ep.exe
 dist/
 
 # Tilde backups (e.g. ep.exe~)
