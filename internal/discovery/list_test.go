@@ -129,3 +129,43 @@ func TestListRunning_EmptyList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
+
+// TestListRunning_ExcludesKubeletContainers verifies that containers carrying
+// the standard kubelet label (io.kubernetes.pod.name) are excluded, regardless
+// of whether the Docker-Desktop-specific label is present. This covers K8s
+// control-plane components (kube-apiserver, etcd, coredns, …) exposed via the
+// Docker socket by distributions like minikube, k3s, and kind.
+func TestListRunning_ExcludesKubeletContainers(t *testing.T) {
+	stub := &listDockerStub{
+		summaries: []container.Summary{
+			{
+				ID:    "user1",
+				Names: []string{"/my-app"},
+				State: "running",
+				Labels: map[string]string{},
+			},
+			{
+				ID:    "k8s1",
+				Names: []string{"/kube-apiserver"},
+				State: "running",
+				Labels: map[string]string{
+					"io.kubernetes.pod.name": "kube-apiserver-minikube",
+				},
+			},
+			{
+				ID:    "k8s2",
+				Names: []string{"/etcd"},
+				State: "running",
+				Labels: map[string]string{
+					"io.kubernetes.pod.name":      "etcd-minikube",
+					"io.kubernetes.pod.namespace": "kube-system",
+				},
+			},
+		},
+	}
+
+	result, err := discovery.ListRunning(context.Background(), stub)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, "my-app", result[0].Name)
+}

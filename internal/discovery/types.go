@@ -15,6 +15,11 @@ type MountInfo struct {
 type ContainerMeta struct {
 	ID           string
 	Name         string
+	// DisplayName is the normalised name used for display only.
+	// It is computed by ApplyPolicy from Containers.DisplayNamePatterns and
+	// equals Name when no pattern matches.  All internal tracking (health keys,
+	// log labels, Loki queries) still uses Name.
+	DisplayName  string
 	Image        string
 	Labels       map[string]string
 	StartedAt    time.Time

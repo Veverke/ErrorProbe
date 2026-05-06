@@ -77,6 +77,30 @@ type SeverityPatterns struct {
 // Containers holds container watch policy.
 type Containers struct {
 	Exclude []string `mapstructure:"exclude"`
+	// Include, when non-empty, acts as an allow-list: only containers that match
+	// at least one pattern here are watched (after Exclude is applied).
+	// Supports the same "pod/<glob>", "namespace/<glob>", and "<name glob>" syntax
+	// as Exclude.  Useful for "infra-only" mode: set include to
+	// ["namespace/kube-system"] to watch only Kubernetes infrastructure pods.
+	Include []string `mapstructure:"include"`
+	// DisplayNamePatterns is a list of regular expressions used to normalise
+	// container names for display.  Each pattern must contain exactly one
+	// capture group; when a container name matches, group 1 becomes its display
+	// name.  Patterns are evaluated in order; the first match wins.
+	// Leave empty (or omit from errorprobe.yaml) to use DefaultDisplayNamePatterns.
+	DisplayNamePatterns []string `mapstructure:"display_name_patterns"`
+}
+
+// DefaultDisplayNamePatterns are the display-name normalisation regexes shipped
+// with ErrorProbe.  They strip the noisy random suffixes that Kubernetes appends
+// to container names.  Used whenever Containers.DisplayNamePatterns is empty.
+var DefaultDisplayNamePatterns = []string{
+	// K8s StatefulSet / Job / Deployment instance suffix: strip the trailing 5-char random suffix.
+	// e.g.  selling-counter-couchdb-vx8fw  →  selling-counter-couchdb
+	// e.g.  payments-api-7d9f6b8c4-vx8fw  →  payments-api-7d9f6b8c4
+	// (For Deployment names the ReplicaSet hash remains; it is stable across restarts
+	//  and far less noisy than the ever-changing instance suffix.)
+	`^(.*)-[a-z0-9]{5}$`,
 }
 
 // K8sConfig holds Kubernetes discovery settings.

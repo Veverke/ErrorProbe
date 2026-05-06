@@ -4,3 +4,28 @@ check:
   fail_on: HAS_ERRORS
   exclude:
     - broken-app
+
+# ---------------------------------------------------------------------------
+# Container watch policy
+# ---------------------------------------------------------------------------
+# Preset A (default) — exclude K8s infrastructure; watch only application pods.
+containers:
+  exclude:
+    - namespace/kube-system
+    - namespace/kube-public
+    - namespace/kube-node-lease
+
+# Preset B — watch only K8s infrastructure (comment out Preset A first).
+# containers:
+#   include:
+#     - namespace/kube-system
+
+# Custom name-normalisation patterns for the watch view.
+# ErrorProbe ships two built-in defaults (shown below).  Override this list
+# to add company-specific suffixes or disable stripping entirely.
+# Each pattern must contain exactly one capture group; the first match wins.
+#
+# containers:
+#   display_name_patterns:
+#     - '^(.*)-[a-z0-9]{5,10}-[a-z0-9]{5}$'  # K8s Deployment: strip hash + pod suffix
+#     - '^(.*)-[a-z0-9]{5}$'                   # K8s StatefulSet / Job: strip pod suffix

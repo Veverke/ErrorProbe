@@ -42,11 +42,10 @@ func runDown(ctx context.Context, cfg *config.Config, purge bool, prog *cmdProgr
 	// Killing it frees both before we start issuing API calls.
 	pidPath := cfg.StateDir() + "ep.pid"
 	res, _ := pid.KillRunning(pidPath)
-	if !res.Found {
-		// No pid file — fall back to killing by process name (handles the case
-		// where ep up was started with an older binary that didn't write a pid file).
-		_ = pid.KillByName("ep")
-	}
+	// Always sweep by name so that other ep subcommands (e.g. 'ep watch', 'ep logs')
+	// that hold the log file open are also terminated, not just the ep up daemon
+	// tracked by the pid file.
+	_ = pid.KillByName("ep")
 	logger.Debug("pre-down ep up kill", "pid_file_found", res.Found, "killed", res.Killed)
 
 	// Best-effort: remove Vector DaemonSet from K8s cluster if available.

@@ -23,6 +23,12 @@ const ManagedLabelValue = "errorprobe"
 // We exclude these because they are managed by K8s, not the user's Docker Compose / CLI.
 const k8sContainerLabel = "io.kubernetes.docker.type"
 
+// k8sPodNameLabel is set by the kubelet on every Docker container it creates, regardless
+// of the Kubernetes distribution (Docker Desktop, minikube, k3s, kind, …).
+// Checking this label catches K8s control-plane containers (kube-apiserver, etcd, …)
+// that do not carry the Docker-Desktop-specific k8sContainerLabel.
+const k8sPodNameLabel = "io.kubernetes.pod.name"
+
 // ListRunning returns all running user containers, excluding any containers
 // managed by ErrorProbe (those with the label managed-by=errorprobe).
 // RestartCount and InfraStatus are populated via a separate inspect call.
@@ -42,6 +48,13 @@ func ListRunning(ctx context.Context, dockerClient docker.DockerAPI) ([]Containe
 		// Exclude Kubernetes infrastructure containers (Docker Desktop exposes them
 		// as regular Docker containers via the Docker API).
 		if _, ok := s.Labels[k8sContainerLabel]; ok {
+			continue
+		}
+		// Exclude any container started by the kubelet (standard label across all
+		// K8s distributions: Docker Desktop, minikube, k3s, kind, …).
+		// This catches control-plane pods (kube-apiserver, etcd, coredns, …) that
+		// do not carry the Docker-Desktop-specific k8sContainerLabel.
+		if _, ok := s.Labels[k8sPodNameLabel]; ok {
 			continue
 		}
 

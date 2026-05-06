@@ -16,6 +16,19 @@ func cfgWithExcludes(patterns ...string) *config.Config {
 	}
 }
 
+func cfgWithIncludes(patterns ...string) *config.Config {
+	return &config.Config{
+		Containers: config.Containers{Include: patterns},
+	}
+}
+
+func cfgWithExcludesAndIncludes(excludes, includes []string) *config.Config {
+	return &config.Config{
+		Containers: config.Containers{Exclude: excludes, Include: includes},
+	}
+}
+
+
 // T5.13 — extended ApplyPolicy tests
 
 func TestApplyPolicy_NoExclusions_AllReturned(t *testing.T) {
@@ -108,3 +121,150 @@ func TestApplyPolicy_SortedByRuntimeThenName(t *testing.T) {
 	assert.Equal(t, "k8s", result[2].Runtime)
 	assert.Equal(t, "k8s", result[3].Runtime)
 }
+
+// Include-list ("allow-list") tests.
+
+func TestApplyPolicy_Include_AllowsOnly(t *testing.T) {
+	containers := []discovery.ContainerMeta{
+		{Name: "app", Namespace: "default", Runtime: "k8s"},
+		{Name: "coredns", Namespace: "kube-system", Runtime: "k8s"},
+		{Name: "etcd", Namespace: "kube-system", Runtime: "k8s"},
+	}
+	result := discovery.ApplyPolicy(containers, cfgWithIncludes("namespace/kube-system"))
+	require.Len(t, result, 2)
+	for _, c := range result {
+		assert.Equal(t, "kube-system", c.Namespace)
+	}
+}
+
+func TestApplyPolicy_Include_EmptyMeansAll(t *testing.T) {
+	containers := []discovery.ContainerMeta{
+		{Name: "app", Runtime: "docker"},
+		{Name: "svc", Namespace: "default", Runtime: "k8s"},
+	}
+	result := discovery.ApplyPolicy(containers, cfgWithIncludes()) // no include = no filter
+	assert.Len(t, result, 2)
+}
+
+func TestApplyPolicy_Include_PodGlob(t *testing.T) {
+	containers := []discovery.ContainerMeta{
+		{Name: "app", Pod: "app-pod", Runtime: "k8s"},
+		{Name: "debug", Pod: "debug-pod", Runtime: "k8s"},
+	}
+	result := discovery.ApplyPolicy(containers, cfgWithIncludes("pod/app-*"))
+	require.Len(t, result, 1)
+	assert.Equal(t, "app", result[0].Name)
+}
+
+func TestApplyPolicy_Include_NameGlob_DockerAndK8s(t *testing.T) {
+	containers := []discovery.ContainerMeta{
+		{Name: "payments-api", Runtime: "docker"},
+		{Name: "payments-worker", Runtime: "docker"},
+		{Name: "debug", Runtime: "docker"},
+	}
+	result := discovery.ApplyPolicy(containers, cfgWithIncludes("payments-*"))
+	require.Len(t, result, 2)
+	for _, c := range result {
+		assert.Contains(t, c.Name, "payments")
+	}
+}
+
+func TestApplyPolicy_ExcludeTakesPrecedenceOverInclude(t *testing.T) {
+	// If a container matches both exclude and include, exclude wins.
+	containers := []discovery.ContainerMeta{
+		{Name: "svc", Namespace: "kube-system", Runtime: "k8s"},
+	}
+	result := discovery.ApplyPolicy(containers, cfgWithExcludesAndIncludes(
+		[]string{"namespace/kube-system"},
+		[]string{"namespace/kube-system"},
+	))
+	assert.Empty(t, result)
+}
+
+// ---------------------------------------------------------------------------
+// Display-name pattern tests
+// ---------------------------------------------------------------------------
+
+func cfgWithDisplayPatterns(patterns ...string) *config.Config {
+	return &config.Config{
+		Containers: config.Containers{DisplayNamePatterns: patterns},
+	}
+}
+
+func TestApplyPolicy_DisplayName_DefaultPatterns_K8sDeployment(t *testing.T) {
+	// K8s Deployment name: only the 5-char instance suffix is stripped by default.
+	// The ReplicaSet hash is stable across restarts and intentionally kept.
+	containers := []discovery.ContainerMeta{
+		{Name: "payments-api-7d9f6b8c4-vx8fw", Runtime: "k8s"},
+	}
+	result := discovery.ApplyPolicy(containers, &config.Config{})
+	require.Len(t, result, 1)
+	assert.Equal(t, "payments-api-7d9f6b8c4", result[0].DisplayName)
+	assert.Equal(t, "payments-api-7d9f6b8c4-vx8fw", result[0].Name, "Name must be unchanged")
+}
+
+func TestApplyPolicy_DisplayName_DefaultPatterns_K8sStatefulSet(t *testing.T) {
+	// K8s StatefulSet / Job name: strip pod-instance suffix only.
+	containers := []discovery.ContainerMeta{
+		{Name: "selling-counter-couchdb-vx8fw", Runtime: "k8s"},
+		{Name: "selling-counter-pgsql-qhk9h", Runtime: "k8s"},
+		{Name: "voucher-service-pgsql-8gzsm", Runtime: "k8s"},
+	}
+	result := discovery.ApplyPolicy(containers, &config.Config{})
+	require.Len(t, result, 3)
+	assert.Equal(t, "selling-counter-couchdb", result[0].DisplayName)
+	assert.Equal(t, "selling-counter-pgsql", result[1].DisplayName)
+	assert.Equal(t, "voucher-service-pgsql", result[2].DisplayName)
+}
+
+func TestApplyPolicy_DisplayName_NoMatchFallsBackToName(t *testing.T) {
+	// A plain name with no suffix should display as-is.
+	containers := []discovery.ContainerMeta{
+		{Name: "payments-api", Runtime: "docker"},
+	}
+	result := discovery.ApplyPolicy(containers, &config.Config{})
+	require.Len(t, result, 1)
+	assert.Equal(t, "payments-api", result[0].DisplayName)
+}
+
+func TestApplyPolicy_DisplayName_UserPattern_OverridesDefault(t *testing.T) {
+	// A user-supplied pattern can strip company-specific suffixes.
+	containers := []discovery.ContainerMeta{
+		{Name: "payments-api-prod", Runtime: "docker"},
+		{Name: "payments-api-staging", Runtime: "docker"},
+	}
+	result := discovery.ApplyPolicy(containers, cfgWithDisplayPatterns(`^(.*)-(?:prod|staging)$`))
+	require.Len(t, result, 2)
+	assert.Equal(t, "payments-api", result[0].DisplayName)
+	assert.Equal(t, "payments-api", result[1].DisplayName)
+}
+
+func TestApplyPolicy_DisplayName_FirstPatternWins(t *testing.T) {
+	// User-supplied patterns: first match wins.
+	containers := []discovery.ContainerMeta{
+		{Name: "svc-abc1234567-xyzab", Runtime: "k8s"},
+	}
+	// Two patterns: the more-specific one (hash+suffix) is listed first.
+	result := discovery.ApplyPolicy(containers, cfgWithDisplayPatterns(
+		`^(.*)-[a-z0-9]{5,10}-[a-z0-9]{5}$`, // hash + suffix
+		`^(.*)-[a-z0-9]{5}$`,                  // suffix only
+	))
+	require.Len(t, result, 1)
+	// First pattern matches and strips both hash and suffix.
+	assert.Equal(t, "svc", result[0].DisplayName)
+}
+
+func TestApplyPolicy_DisplayName_InvalidPatternSkipped(t *testing.T) {
+	// A syntactically invalid regex should be silently skipped; the valid
+	// pattern after it must still be applied.
+	containers := []discovery.ContainerMeta{
+		{Name: "app-vx8fw", Runtime: "docker"},
+	}
+	result := discovery.ApplyPolicy(containers, cfgWithDisplayPatterns(
+		`[invalid`,          // bad regex — skipped
+		`^(.*)-[a-z0-9]{5}$`, // valid — should match
+	))
+	require.Len(t, result, 1)
+	assert.Equal(t, "app", result[0].DisplayName)
+}
+

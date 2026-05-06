@@ -2,6 +2,7 @@ package health
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,37 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			if ev.Level == "error" {
 				// Track fingerprints for Tier 2 detection (error-level only).
 				e.snapshot.RecordFingerprint(key, Fingerprint(ev.Message))
+			}
+		}
+	}
+
+	// Continuation pass: many runtimes write multi-line errors where the header line
+	// ends with a colon and the actual error detail arrives on the next line at a
+	// different (often lower) severity level, so the main loop above misses it.
+	//
+	// Examples:
+	//   Erlang/OTP   "Error in process … with exit value:"  → "{database_does_not_exist,…}"
+	//   Python        "Traceback (most recent call last):"  → "ValueError: …"
+	//   Java          "Exception in thread \"main\":"       → "java.lang.NullPointerException: …"
+	//
+	// For every container whose last stored error ends with ":", scan the current batch
+	// for the first non-empty, non-header follow-on line from that same container and
+	// append it. The search is bounded to one Vector batch (≤100 events, ≤1 s window),
+	// which keeps the context tight enough to avoid false positives.
+	for key, ch := range e.snapshot.Containers {
+		if !strings.HasSuffix(strings.TrimSpace(ch.LastErrorMsg), ":") {
+			continue
+		}
+		for _, ev := range events {
+			if logEventKey(ev) != key {
+				continue
+			}
+			msg := strings.TrimSpace(ev.Message)
+			if msg != "" && !strings.HasSuffix(msg, ":") {
+				ch.LastErrorMsg = strings.TrimSpace(ch.LastErrorMsg) + " " + msg
+				e.snapshot.Containers[key] = ch
+				changed = true
+				break
 			}
 		}
 	}

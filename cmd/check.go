@@ -105,8 +105,14 @@ func healthKeyDisplay(key string) string {
 }
 
 // checkHumanMsg extracts the most readable part of a log message.
-// For logfmt it returns msg="..."; otherwise the first ~120 runes.
+// Applies the same extraction strategy as the TUI's humanMsg:
+//  1. logfmt:      msg="..." or message="..."
+//  2. JSON:        {"error":"..."} / {"message":"..."} / {"reason":"..."} etc.
+//  3. Erlang/OTP:  {reason_atom,[stacktrace]} with optional <<"name">> binaries
+//  4. Java/Python: ExceptionClassName: message
+//  5. fallback:    first ~120 runes
 func checkHumanMsg(raw string) string {
+	// 1. logfmt
 	for _, prefix := range []string{`msg="`, `message="`} {
 		if idx := strings.Index(raw, prefix); idx >= 0 {
 			rest := raw[idx+len(prefix):]
@@ -115,11 +121,112 @@ func checkHumanMsg(raw string) string {
 			}
 		}
 	}
+	// 2–4: structured detail
+	if detail := checkExtractStructuredDetail(raw); detail != "" {
+		return detail
+	}
+	// 5. fallback
 	r := []rune(strings.TrimSpace(raw))
 	if len(r) > 120 {
 		return string(r[:119]) + "…"
 	}
 	return string(r)
+}
+
+// checkExtractStructuredDetail is the check-command equivalent of the TUI's
+// extractStructuredDetail. It handles JSON, Erlang/OTP, and Java/Python errors.
+func checkExtractStructuredDetail(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// JSON object
+	if strings.HasPrefix(s, "{") && strings.Contains(s, `"`) {
+		for _, field := range []string{"error", "message", "reason", "msg", "err", "cause"} {
+			for _, kv := range []string{`"` + field + `":"`, `"` + field + `": "`} {
+				if idx := strings.Index(strings.ToLower(s), kv); idx >= 0 {
+					rest := s[idx+len(kv):]
+					if end := strings.IndexByte(rest, '"'); end > 0 {
+						return rest[:end]
+					}
+				}
+			}
+		}
+	}
+	// Erlang/OTP tuple
+	if strings.HasPrefix(s, "{") {
+		if v := checkExtractErlangReason(s); v != "" {
+			return v
+		}
+	}
+	// Java/Python/Go: "identifier.Name: detail"
+	if idx := strings.Index(s, ": "); idx > 0 && idx < 80 {
+		if checkLooksLikeTypeName(s[:idx]) {
+			r := []rune(s)
+			if len(r) > 120 {
+				return string(r[:119]) + "…"
+			}
+			return s
+		}
+	}
+	return ""
+}
+
+func checkExtractErlangReason(s string) string {
+	inner := s[1:]
+	end := strings.IndexAny(inner, ",}")
+	if end < 0 {
+		return ""
+	}
+	atom := strings.TrimSpace(inner[:end])
+	if !checkIsErlangAtom(atom) {
+		return ""
+	}
+	var binaries []string
+	rest := s
+	for len(binaries) < 2 {
+		bStart := strings.Index(rest, `<<"`)
+		if bStart < 0 {
+			break
+		}
+		bEnd := strings.Index(rest[bStart+3:], `">>`)
+		if bEnd < 0 {
+			break
+		}
+		val := rest[bStart+3 : bStart+3+bEnd]
+		if val != "" {
+			binaries = append(binaries, val)
+		}
+		rest = rest[bStart+3+bEnd+3:]
+	}
+	if len(binaries) == 0 {
+		return atom
+	}
+	return atom + " (" + strings.Join(binaries, ", ") + ")"
+}
+
+func checkIsErlangAtom(s string) bool {
+	if len(s) == 0 || len(s) > 64 || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func checkLooksLikeTypeName(s string) bool {
+	if len(s) == 0 || len(s) > 120 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckResult is a single failing container entry.

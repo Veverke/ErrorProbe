@@ -196,6 +196,7 @@ func (m Model) View() string {
 	infraState := make(map[string]string, len(m.ws.Containers))
 	containerRuntime := make(map[string]string, len(m.ws.Containers))
 	containerSubtitle := make(map[string]string, len(m.ws.Containers))
+	displayNameByKey := make(map[string]string, len(m.ws.Containers))
 	restartCount := make(map[string]int, len(m.ws.Containers))
 	prevExitMsg := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
@@ -203,6 +204,9 @@ func (m Model) View() string {
 		infraState[key] = c.InfraStatus
 		containerRuntime[key] = c.Runtime
 		restartCount[key] = c.RestartCount
+		if c.DisplayName != "" {
+			displayNameByKey[key] = c.DisplayName
+		}
 		if c.PrevExitMsg != "" {
 			prevExitMsg[key] = c.PrevExitMsg
 		}
@@ -401,7 +405,11 @@ func (m Model) View() string {
 		}
 
 		cell := func(s string, w int) string { return " " + truncPad(s, w) + " " }
-		c1 := cell(healthKeyDisplay(name), col1W)
+		dispName := displayNameByKey[name]
+		if dispName == "" {
+			dispName = healthKeyDisplay(name)
+		}
+		c1 := cell(dispName, col1W)
 		c2 := " " + padRight(funcStyled, col2W) + " "
 		// Color infra status: green=running, yellow=restarting/pending, red=error/failed/crashed/unknown
 		var infraStyled string
@@ -655,7 +663,9 @@ func (m Model) sortedNames() []string {
 
 // healthKeyDisplay returns the human-readable container name portion of a health key.
 // For K8s keys ("namespace/container") this is the container part; for Docker keys
-// (bare name) this is the whole string.
+// (bare name) this is the whole string.  Suffix stripping is handled upstream by
+// ContainerMeta.DisplayName (computed in ApplyPolicy); this is the fallback for
+// stale snapshot entries that have no corresponding ContainerMeta.
 func healthKeyDisplay(key string) string {
 	if idx := strings.LastIndex(key, "/"); idx >= 0 {
 		return key[idx+1:]
@@ -692,9 +702,14 @@ func truncateRune(s string, n int) string {
 }
 
 // humanMsg extracts the most readable part of a log message for inline display.
-// For logfmt lines it returns the msg="..." field; otherwise it strips structural
-// noise and returns the first ~200 runes.
+// It tries each extraction strategy in order:
+//  1. logfmt:      msg="..." or message="..."
+//  2. JSON:        {"error":"..."} / {"message":"..."} / {"reason":"..."} etc.
+//  3. Erlang/OTP:  {reason_atom,[stacktrace]} with optional <<"name">> binaries
+//  4. Java/Python: ExceptionClassName: message  (dotted/underscored identifier then ": ")
+//  5. fallback:    first 200 runes of the raw message
 func humanMsg(raw string) string {
+	// 1. logfmt
 	for _, prefix := range []string{`msg="`, `message="`} {
 		if idx := strings.Index(raw, prefix); idx >= 0 {
 			rest := raw[idx+len(prefix):]
@@ -703,11 +718,132 @@ func humanMsg(raw string) string {
 			}
 		}
 	}
+	// 2–4: structured detail
+	if detail := extractStructuredDetail(raw); detail != "" {
+		return detail
+	}
+	// 5. fallback
 	r := []rune(strings.TrimSpace(raw))
 	if len(r) > 200 {
 		return string(r[:199]) + "…"
 	}
 	return string(r)
+}
+
+// extractStructuredDetail extracts the most diagnostic part from a log line
+// that carries structured error data. It is runtime-agnostic and handles:
+//
+//   - JSON objects: first of "error", "message", "reason", "msg", "err", "cause" fields
+//     (covers Node.js, Java structured logging, Go slog JSON, Python structlog, etc.)
+//   - Erlang/OTP tuples: {reason_atom,[stacktrace]} + <<"binary">> resource names
+//     (covers CouchDB, RabbitMQ, any BEAM/OTP service)
+//   - Java/Python/Go exception lines: "pkg.ExceptionName: detail message"
+//     (covers JVM stack traces, Python tracebacks, Go error wrapping)
+//
+// Returns "" when no structured pattern is recognised so the caller can fall back.
+func extractStructuredDetail(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// JSON object — scan for common error-bearing field names
+	if strings.HasPrefix(s, "{") && strings.Contains(s, `"`) {
+		for _, field := range []string{"error", "message", "reason", "msg", "err", "cause"} {
+			for _, kv := range []string{`"` + field + `":"`, `"` + field + `": "`} {
+				if idx := strings.Index(strings.ToLower(s), kv); idx >= 0 {
+					rest := s[idx+len(kv):]
+					if end := strings.IndexByte(rest, '"'); end > 0 {
+						return rest[:end]
+					}
+				}
+			}
+		}
+	}
+	// Erlang/OTP tuple: {atom_reason,[...]} with optional <<"binary">> resource names
+	if strings.HasPrefix(s, "{") {
+		if v := extractErlangReason(s); v != "" {
+			return v
+		}
+	}
+	// Java/Python/Go: "some.ExceptionName: detail" — identifier chars (letters, digits,
+	// dots, underscores) before ": " with no spaces in the prefix.
+	if idx := strings.Index(s, ": "); idx > 0 && idx < 80 {
+		if looksLikeTypeName(s[:idx]) {
+			r := []rune(s)
+			if len(r) > 120 {
+				return string(r[:119]) + "…"
+			}
+			return s
+		}
+	}
+	return ""
+}
+
+// extractErlangReason extracts the error reason atom and up to two <<"name">> binary
+// values from an Erlang error tuple such as:
+//
+//	{database_does_not_exist,[{mem3_shards,...,[<<"_users">>],...}]}
+//
+// Returns "" if the input is not a recognisable Erlang error tuple.
+func extractErlangReason(s string) string {
+	inner := s[1:] // skip leading {
+	end := strings.IndexAny(inner, ",}")
+	if end < 0 {
+		return ""
+	}
+	atom := strings.TrimSpace(inner[:end])
+	if !isErlangAtom(atom) {
+		return ""
+	}
+	var binaries []string
+	rest := s
+	for len(binaries) < 2 {
+		bStart := strings.Index(rest, `<<"`)
+		if bStart < 0 {
+			break
+		}
+		bEnd := strings.Index(rest[bStart+3:], `">>`)
+		if bEnd < 0 {
+			break
+		}
+		val := rest[bStart+3 : bStart+3+bEnd]
+		if val != "" {
+			binaries = append(binaries, val)
+		}
+		rest = rest[bStart+3+bEnd+3:]
+	}
+	if len(binaries) == 0 {
+		return atom
+	}
+	return atom + " (" + strings.Join(binaries, ", ") + ")"
+}
+
+// isErlangAtom reports whether s is a valid Erlang atom: starts with a lowercase
+// letter, contains only lowercase letters, digits, and underscores, max 64 chars.
+func isErlangAtom(s string) bool {
+	if len(s) == 0 || len(s) > 64 || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// looksLikeTypeName reports whether s could be a Java/Python/Go type, package, or
+// error identifier: only letters, digits, dots, and underscores, no spaces.
+func looksLikeTypeName(s string) bool {
+	if len(s) == 0 || len(s) > 120 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func repeat(s string, n int) string {

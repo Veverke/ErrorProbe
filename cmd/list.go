@@ -129,11 +129,13 @@ Use --runtime docker or --runtime k8s to filter by runtime.`,
 			if watched[c.ID] {
 				watching = "yes"
 			}
-			name := c.Name
+			name := c.DisplayName
+			if name == "" {
+				name = c.Name
+			}
 			pod := c.Pod
 			ns := c.Namespace
 			if listCompactFlag {
-				name = compactContainerName(name)
 				pod = compactPodName(pod)
 			}
 			rows = append(rows, tableRow{cells: []string{
@@ -189,7 +191,7 @@ func printListDetails(containers []discovery.ContainerMeta, watched map[string]b
 		if !watched[c.ID] {
 			watchMark = "not watching"
 		}
-		fmt.Printf("%s  [%s]  runtime=%s\n", c.Name, watchMark, c.Runtime)
+		fmt.Printf("%s  [%s]  runtime=%s\n", c.DisplayName, watchMark, c.Runtime)
 		fmt.Printf("%simage:   %s\n", indent, c.Image)
 		fmt.Printf("%sstatus:  %s\n", indent, c.InfraStatus)
 		if c.Runtime == "k8s" {
@@ -323,16 +325,7 @@ func printTable(cols []tableCol, rows []tableRow) {
 	fmt.Println(sep("+", "+", "+", "-"))
 }
 
-var reContainerSuffix = regexp.MustCompile(`^(.*)-[a-z0-9]{5}$`)
 var rePodHash = regexp.MustCompile(`^(.*)-[a-z0-9]{5,10}-[a-z0-9]{5}$`)
-
-// compactContainerName strips a trailing 5-char operator suffix (e.g. "-abcde").
-func compactContainerName(name string) string {
-	if m := reContainerSuffix.FindStringSubmatch(name); m != nil {
-		return m[1]
-	}
-	return name
-}
 
 // compactPodName strips the deployment hash from a pod name.
 func compactPodName(pod string) string {
