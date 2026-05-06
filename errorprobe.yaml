@@ -9,11 +9,23 @@ check:
 # Container watch policy
 # ---------------------------------------------------------------------------
 # Preset A (default) — exclude K8s infrastructure; watch only application pods.
+#
+# Layer 1: namespace-based excludes (apply to K8s-API-discovered pods).
+# Layer 2: name-based excludes (defence-in-depth for containers that are
+#   exposed via the Docker socket by Docker Desktop / minikube without
+#   carrying standard "io.kubernetes.*" labels, e.g. storage-provisioner,
+#   vpnkit-controller).
 containers:
   exclude:
     - namespace/kube-system
     - namespace/kube-public
     - namespace/kube-node-lease
+    - namespace/errorprobe     # ErrorProbe's own Vector DaemonSet namespace
+    - kube-*               # kube-apiserver, kube-controller-manager, kube-proxy, …
+    - etcd                 # etcd static pod
+    - coredns              # CoreDNS (name without hash suffix)
+    - storage-provisioner  # minikube / Docker Desktop storage add-on
+    - vpnkit-controller    # Docker Desktop VPN-kit networking helper
 
 # Preset B — watch only K8s infrastructure (comment out Preset A first).
 # containers:

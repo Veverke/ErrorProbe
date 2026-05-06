@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/links"
@@ -48,7 +49,10 @@ type Model struct {
 	snapshotPath   string
 	watchSetPath   string
 	grafanaBaseURL string
-	cursor         int
+	cfgPath  string              // path of the config file to write exclude entries to
+	hidden   map[string]struct{} // session-only; [h] adds, [u] clears; never written to disk
+	excluded map[string]struct{} // session mirror of [x] disk writes; [u] never touches this
+	cursor   int
 	expanded       bool
 	hScroll        int
 	width          int
@@ -65,20 +69,25 @@ var (
 	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	borderStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	detailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))  // steel-blue; expanded panel text
 	selectedBg     = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 	statusErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 // NewModel creates a TUI model. The model polls snapshotPath and watchSetPath
 // every second for live updates. grafanaBaseURL is used to build Explore deep
-// links when the user presses [g].
-func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws discovery.WatchSet, grafanaBaseURL string) Model {
+// links when the user presses [g]. cfgPath is the config file to which [x]
+// exclude entries are written; pass "" to disable that feature.
+func NewModel(snapshotPath, watchSetPath string, snap health.HealthSnapshot, ws discovery.WatchSet, grafanaBaseURL, cfgPath string) Model {
 	return Model{
 		snap:           snap,
 		ws:             ws,
 		snapshotPath:   snapshotPath,
 		watchSetPath:   watchSetPath,
 		grafanaBaseURL: grafanaBaseURL,
+		cfgPath:  cfgPath,
+		hidden:   make(map[string]struct{}),
+		excluded: make(map[string]struct{}),
 	}
 }
 
@@ -152,6 +161,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = ""
 				}
 			}
+		case "h":
+			rows := m.sortedNames()
+			if m.cursor < len(rows) {
+				name := rows[m.cursor]
+				m.hidden[name] = struct{}{}
+				m.statusMsg = fmt.Sprintf("hidden %q — [u] to unhide all", healthKeyDisplay(name))
+				if m.cursor >= len(rows)-1 && m.cursor > 0 {
+					m.cursor--
+				}
+				m.expanded = false
+			}
+		case "u":
+			if len(m.hidden) > 0 {
+				m.hidden = make(map[string]struct{})
+				m.statusMsg = "all hidden containers restored"
+			}
+		case "x":
+			rows := m.sortedNames()
+			if m.cursor < len(rows) && m.cfgPath != "" {
+				name := rows[m.cursor]
+				pattern := healthKeyDisplay(name)
+				if err := config.AppendExclude(m.cfgPath, pattern); err != nil {
+					m.statusMsg = fmt.Sprintf("exclude: %v", err)
+				} else {
+					m.excluded[name] = struct{}{}
+					m.statusMsg = fmt.Sprintf("excluded %q — will be skipped on next ep up", pattern)
+					if m.cursor >= len(rows)-1 && m.cursor > 0 {
+						m.cursor--
+					}
+					m.expanded = false
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -199,11 +240,17 @@ func (m Model) View() string {
 	displayNameByKey := make(map[string]string, len(m.ws.Containers))
 	restartCount := make(map[string]int, len(m.ws.Containers))
 	prevExitMsg := make(map[string]string, len(m.ws.Containers))
+	containerPod := make(map[string]string, len(m.ws.Containers))
+	containerNamespace := make(map[string]string, len(m.ws.Containers))
+	containerNode := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
 		key := c.HealthKey()
 		infraState[key] = c.InfraStatus
 		containerRuntime[key] = c.Runtime
 		restartCount[key] = c.RestartCount
+		containerPod[key] = c.Pod
+		containerNamespace[key] = c.Namespace
+		containerNode[key] = c.Node
 		if c.DisplayName != "" {
 			displayNameByKey[key] = c.DisplayName
 		}
@@ -324,6 +371,9 @@ func (m Model) View() string {
 	}
 	showSectionHeaders := hasDocker && hasK8s
 	lastRuntime := ""
+
+	// innerW is the total visible width between the outer │ borders, shared by all detail lines.
+	innerW := col1W + 2 + col2W + 2 + col3W + 2 + col4W + 2
 
 	// Scrollable content: container rows clipped to the available height.
 	contentRows := make([]string, 0, len(names)*2)
@@ -458,96 +508,19 @@ func (m Model) View() string {
 		line := sep + c1 + sep + c2 + sep + c3 + sep + c4 + sep
 		contentRows = append(contentRows, line)
 
-		// Expanded view: show full last error message, infra detail, or restart count.
+		// Expanded view: multi-line panel with error summary, identity, and Troubleshoot commands.
 		if i == m.cursor && m.expanded {
-			var detail string
-			pem := prevExitMsg[name]
-			rc := restartCount[name]
-			switch ch.State {
-			case health.StateHasErrors:
-				if ch.LastErrorMsg != "" {
-					detail = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
-				} else {
-					detail = fmt.Sprintf("⚠  has errors (%d total, no message)", ch.ErrorCount)
-				}
-				if pem != "" {
-					detail += "  │  prev exit: " + pem
-				}
-			case health.StateFailing:
-				if ch.DominantFingerprintCount > 0 {
-					detail = fmt.Sprintf("✗  same pattern %d×: %s", ch.DominantFingerprintCount, ch.LastErrorMsg)
-				} else if ch.LastErrorMsg != "" {
-					detail = fmt.Sprintf("✗  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
-				} else {
-					detail = "✗  failing (no message)"
-				}
-				if pem != "" {
-					detail += "  │  prev exit: " + pem
-				}
-			default:
-				// Show infra detail even if no log errors.
-				switch infra {
-				case "restarting":
-					if ch.ErrorCount > 0 && ch.LastErrorMsg != "" {
-						detail = fmt.Sprintf("⚠  current (%d errors): %s", ch.ErrorCount, ch.LastErrorMsg)
-						if pem != "" {
-							detail += "  │  prev exit: " + pem
-						}
-					} else if pem != "" {
-						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  prev exit: %s", rc, pem)
-					} else {
-						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  (no prev exit log)", rc)
-					}
-				case "failed", "error", "crashed", "terminating":
-					detail = fmt.Sprintf("✗  infra status: %s  restart count: %d", infra, rc)
-				default:
-					detail = fmt.Sprintf("✓  no errors recorded  infra: %s", infra)
-				}
+			rt := containerRuntime[name]
+			if rt == "" {
+				rt = "docker"
 			}
-			// Append K8s pod/namespace subtitle when available.
-			if sub := containerSubtitle[name]; sub != "" {
-				detail += "  ·  " + sub
+			for _, dl := range m.buildExpandedLines(
+				name, ch, infra, innerW, rt,
+				containerPod[name], containerNamespace[name], containerNode[name],
+				prevExitMsg[name], restartCount[name],
+			) {
+				contentRows = append(contentRows, dl)
 			}
-			innerW := col1W + 2 + col2W + 2 + col3W + 2 + col4W + 2 // content width between outer │
-			// Horizontal scroll: show a scrollable window into the full detail string.
-			// Right/Left keys move the window; ◀ ▶ arrows indicate more content.
-			detailRunes := []rune(detail)
-			totalLen := len(detailRunes)
-			hOff := m.hScroll
-			if hOff > totalLen {
-				hOff = totalLen
-			}
-			viewW := innerW - 1 // -1 for leading space
-			hasMore := totalLen > viewW
-			if hasMore {
-				viewW -= 2 // room for ◀ ▶ arrows
-			}
-			if viewW < 1 {
-				viewW = 1
-			}
-			end := hOff + viewW
-			if end > totalLen {
-				end = totalLen
-			}
-			visible := string(detailRunes[hOff:end])
-			pad := viewW - lipgloss.Width(visible)
-			if pad < 0 {
-				pad = 0
-			}
-			var detailLine string
-			if !hasMore {
-				detailLine = " " + visible + strings.Repeat(" ", pad)
-			} else {
-				leftArr, rightArr := " ", " "
-				if hOff > 0 {
-					leftArr = "◀"
-				}
-				if end < totalLen {
-					rightArr = "▶"
-				}
-				detailLine = " " + leftArr + visible + strings.Repeat(" ", pad) + rightArr
-			}
-			contentRows = append(contentRows, borderStyle.Render("│")+dimStyle.Render(detailLine)+borderStyle.Render("│"))
 		}
 	}
 
@@ -592,6 +565,182 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, allRows...)
 }
 
+// buildExpandedLines returns the rows for the multi-line expanded detail panel.
+// Each returned string is a fully bordered row (│...│) ready to append to contentRows.
+//
+// Layout:
+//
+//	│ ⚠ last error (N total): <message>           [h-scrollable] │
+//	│  pod: <pod>  ns: <ns>  node: <node>                        │  (K8s only)
+//	│                                                             │
+//	│  Troubleshoot:                                              │
+//	│    get logs:     <command>                                  │
+//	│    describe pod: <command>                                  │  (K8s)
+//	│    errors only:  <command>                                  │
+//	│    exec shell:   <command>                                  │
+func (m Model) buildExpandedLines(
+	name string,
+	ch health.ContainerHealth,
+	infra string,
+	innerW int,
+	runtime string,
+	pod, namespace, node string,
+	prevExit string,
+	restarts int,
+) []string {
+	// padLine pads or truncates plain-text content to exactly innerW visible characters.
+	padLine := func(s string) string {
+		runes := []rune(s)
+		if len(runes) > innerW {
+			return string(runes[:innerW-1]) + "…"
+		}
+		return s + strings.Repeat(" ", innerW-len(runes))
+	}
+	row := func(content string) string {
+		return borderStyle.Render("│") + detailStyle.Render(padLine(content)) + borderStyle.Render("│")
+	}
+
+	var lines []string
+
+	// --- Line 1: error summary (h-scrollable) ---
+	var summary string
+	switch ch.State {
+	case health.StateHasErrors:
+		if ch.LastErrorMsg != "" {
+			summary = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+		} else {
+			summary = fmt.Sprintf("⚠  has errors (%d total, no message)", ch.ErrorCount)
+		}
+		if prevExit != "" {
+			summary += "  │  prev exit: " + prevExit
+		}
+	case health.StateFailing:
+		if ch.DominantFingerprintCount > 0 {
+			summary = fmt.Sprintf("✗  same pattern %d×: %s", ch.DominantFingerprintCount, ch.LastErrorMsg)
+		} else if ch.LastErrorMsg != "" {
+			summary = fmt.Sprintf("✗  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+		} else {
+			summary = "✗  failing (no message)"
+		}
+		if prevExit != "" {
+			summary += "  │  prev exit: " + prevExit
+		}
+	default:
+		switch infra {
+		case "restarting":
+			if ch.ErrorCount > 0 && ch.LastErrorMsg != "" {
+				summary = fmt.Sprintf("⚠  current (%d errors): %s", ch.ErrorCount, ch.LastErrorMsg)
+				if prevExit != "" {
+					summary += "  │  prev exit: " + prevExit
+				}
+			} else if prevExit != "" {
+				summary = fmt.Sprintf("⚠  container restarting  restart count: %d  prev exit: %s", restarts, prevExit)
+			} else {
+				summary = fmt.Sprintf("⚠  container restarting  restart count: %d  (no prev exit log)", restarts)
+			}
+		case "failed", "error", "crashed", "terminating":
+			summary = fmt.Sprintf("✗  infra status: %s  restart count: %d", infra, restarts)
+		default:
+			summary = fmt.Sprintf("✓  no errors recorded  infra: %s", infra)
+		}
+	}
+	// Render summary with horizontal scroll (◀ ▶ when content overflows).
+	{
+		summaryRunes := []rune(summary)
+		totalLen := len(summaryRunes)
+		hOff := m.hScroll
+		if hOff > totalLen {
+			hOff = totalLen
+		}
+		viewW := innerW - 1 // -1 for leading space
+		hasMore := totalLen > viewW
+		if hasMore {
+			viewW -= 2 // room for ◀ ▶
+		}
+		if viewW < 1 {
+			viewW = 1
+		}
+		end := hOff + viewW
+		if end > totalLen {
+			end = totalLen
+		}
+		visible := string(summaryRunes[hOff:end])
+		pad := viewW - lipgloss.Width(visible)
+		if pad < 0 {
+			pad = 0
+		}
+		var summaryLine string
+		if !hasMore {
+			summaryLine = " " + visible + strings.Repeat(" ", pad)
+		} else {
+			leftArr, rightArr := " ", " "
+			if hOff > 0 {
+				leftArr = "◀"
+			}
+			if end < totalLen {
+				rightArr = "▶"
+			}
+			summaryLine = " " + leftArr + visible + strings.Repeat(" ", pad) + rightArr
+		}
+		lines = append(lines, borderStyle.Render("│")+detailStyle.Render(summaryLine)+borderStyle.Render("│"))
+	}
+
+	// --- Identity line (K8s only) ---
+	if runtime == "k8s" && (pod != "" || namespace != "") {
+		identity := "  pod: " + pod
+		if namespace != "" {
+			identity += "  ns: " + namespace
+		}
+		if node != "" {
+			identity += "  node: " + node
+		}
+		lines = append(lines, row(identity))
+	}
+
+	// --- Blank separator ---
+	lines = append(lines, row(""))
+
+	// --- Troubleshoot header ---
+	lines = append(lines, row("  Troubleshoot:"))
+
+	// --- Commands ---
+	const labelW = 14
+	lbl := func(s string) string {
+		if len(s) < labelW {
+			return s + strings.Repeat(" ", labelW-len(s))
+		}
+		return s
+	}
+	containerDisplay := healthKeyDisplay(name)
+	if runtime == "k8s" && pod != "" {
+		nsFlag := ""
+		if namespace != "" {
+			nsFlag = " -n " + namespace
+		}
+		cmds := [][2]string{
+			{"get logs:", fmt.Sprintf("kubectl logs %s%s --tail=100 --since=10m", pod, nsFlag)},
+			{"describe pod:", fmt.Sprintf("kubectl describe pod %s%s", pod, nsFlag)},
+			{"errors only:", fmt.Sprintf("ep logs %s --errors-only", containerDisplay)},
+			{"exec shell:", fmt.Sprintf("kubectl exec -it %s%s -- /bin/sh", pod, nsFlag)},
+		}
+		for _, c := range cmds {
+			lines = append(lines, row("    "+lbl(c[0])+" "+c[1]))
+		}
+	} else {
+		cmds := [][2]string{
+			{"get logs:", fmt.Sprintf("docker logs %s --tail=100 --since=10m", containerDisplay)},
+			{"inspect:", fmt.Sprintf("docker inspect %s", containerDisplay)},
+			{"errors only:", fmt.Sprintf("ep logs %s --errors-only", containerDisplay)},
+			{"exec shell:", fmt.Sprintf("docker exec -it %s /bin/sh", containerDisplay)},
+		}
+		for _, c := range cmds {
+			lines = append(lines, row("    "+lbl(c[0])+" "+c[1]))
+		}
+	}
+
+	return lines
+}
+
 // renderHeader returns 1 or 2 lines depending on terminal width.
 // The hint keys are split across two lines when the terminal is too narrow
 // to fit them all on one line beside the title.
@@ -599,8 +748,8 @@ func (m Model) renderHeader(n int) []string {
 	title := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n))
 	titleW := lipgloss.Width(title)
 
-	hintsAll := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [g] grafana explore  [o] overview  [q] quit"
-	hintsA := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset"
+	hintsAll := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [h] hide  [u] unhide  [x] exclude  [g] grafana  [o] overview  [q] quit"
+	hintsA := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [h] hide  [u] unhide  [x] exclude"
 	hintsB := "[g] grafana explore  [o] overview  [q] quit"
 
 	w := m.width
@@ -620,43 +769,46 @@ func (m Model) renderHeader(n int) []string {
 	}
 }
 
-// sortedNames returns a deterministically ordered list of all container names
-// from both the health snapshot and the watch set, sorted by runtime then name.
-// sortedNames returns the union of all health keys from the snapshot and the
-// watch set, sorted by runtime then by display name.
+// sortedNames returns a deterministically ordered list of container names
+// from the current watch set, sorted by runtime then display name.
 // Keys are ContainerMeta.HealthKey() values ("namespace/container" for K8s,
 // bare name for Docker) — the same keys used in the health snapshot map.
+//
+// Only the watch set is used as the source of truth for which containers to
+// display.  Health snapshot entries for containers that have since been removed
+// from the watch set (e.g. via an exclude rule) are intentionally NOT shown —
+// they linger in health.json for history but should not appear in the TUI.
 func (m Model) sortedNames() []string {
-	seen := make(map[string]struct{})
-	for key := range m.snap.Containers {
-		seen[key] = struct{}{}
-	}
+	names := make([]string, 0, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
-		seen[c.HealthKey()] = struct{}{}
+		key := c.HealthKey()
+		if _, ok := m.hidden[key]; ok {
+			continue
+		}
+		if _, ok := m.excluded[key]; ok {
+			continue
+		}
+		names = append(names, key)
 	}
-	// Build runtime lookup keyed by health key.
+	// Build runtime and display-name lookups.
 	rtByKey := make(map[string]string, len(m.ws.Containers))
+	dispByKey := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
-		rtByKey[c.HealthKey()] = c.Runtime
-	}
-	names := make([]string, 0, len(seen))
-	for n := range seen {
-		names = append(names, n)
+		key := c.HealthKey()
+		rtByKey[key] = c.Runtime
+		if c.DisplayName != "" {
+			dispByKey[key] = c.DisplayName
+		} else {
+			dispByKey[key] = healthKeyDisplay(key)
+		}
 	}
 	sort.Slice(names, func(i, j int) bool {
 		ri := rtByKey[names[i]]
-		if ri == "" {
-			ri = "docker"
-		}
 		rj := rtByKey[names[j]]
-		if rj == "" {
-			rj = "docker"
-		}
 		if ri != rj {
 			return ri < rj
 		}
-		// Sort by display name (last segment of health key) for readability.
-		return healthKeyDisplay(names[i]) < healthKeyDisplay(names[j])
+		return dispByKey[names[i]] < dispByKey[names[j]]
 	})
 	return names
 }

@@ -63,6 +63,8 @@ func TestListRunningK8s_SystemNamespacesExcluded(t *testing.T) {
 		{Name: "coredns", Namespace: "kube-system", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "coredns", Running: true}}},
 		{Name: "proxy", Namespace: "kube-public", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "proxy", Running: true}}},
 		{Name: "node", Namespace: "kube-node-lease", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "heartbeat", Running: true}}},
+		// ErrorProbe's own Vector DaemonSet — must also be excluded by default.
+		{Name: "errorprobe-vector-abcde", Namespace: "errorprobe", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "vector", Running: true}}},
 	}}
 	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg())
 	require.NoError(t, err)

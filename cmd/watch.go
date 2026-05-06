@@ -45,7 +45,8 @@ for all watched containers in real time, updating as new log events arrive.`,
 		lipgloss.SetColorProfile(termenv.TrueColor)
 
 		grafanaBaseURL := fmt.Sprintf("http://localhost:%d", cfg.Stack.Grafana.Port)
-		model := tui.NewModel(snapshotPath, watchSetPath, snap, ws, grafanaBaseURL)
+		cfgPath := config.ConfigFilePath(cfgFile)
+		model := tui.NewModel(snapshotPath, watchSetPath, snap, ws, grafanaBaseURL, cfgPath)
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("watch TUI: %w", err)

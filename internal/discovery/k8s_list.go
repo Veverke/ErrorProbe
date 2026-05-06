@@ -15,6 +15,9 @@ var defaultExcludeNamespaces = []string{
 	"kube-system",
 	"kube-public",
 	"kube-node-lease",
+	// ErrorProbe deploys its own Vector DaemonSet here; exclude it from
+	// the user's watch set just like the managed-by label does for Docker.
+	"errorprobe",
 }
 
 // recentRestartWindow is how long after the current container instance started

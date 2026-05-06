@@ -130,11 +130,11 @@ func TestListRunning_EmptyList(t *testing.T) {
 	assert.Empty(t, result)
 }
 
-// TestListRunning_ExcludesKubeletContainers verifies that containers carrying
-// the standard kubelet label (io.kubernetes.pod.name) are excluded, regardless
-// of whether the Docker-Desktop-specific label is present. This covers K8s
-// control-plane components (kube-apiserver, etcd, coredns, …) exposed via the
-// Docker socket by distributions like minikube, k3s, and kind.
+// TestListRunning_ExcludesKubeletContainers verifies that containers bearing
+// any "io.kubernetes.*" label are excluded from Docker discovery.  This covers
+// control-plane pods (kube-apiserver, etcd, coredns, …) exposed via the Docker
+// socket by Docker Desktop, minikube, k3s, kind, and similar distributions —
+// regardless of which specific kubernetes label the distribution happens to set.
 func TestListRunning_ExcludesKubeletContainers(t *testing.T) {
 	stub := &listDockerStub{
 		summaries: []container.Summary{
@@ -145,6 +145,7 @@ func TestListRunning_ExcludesKubeletContainers(t *testing.T) {
 				Labels: map[string]string{},
 			},
 			{
+				// io.kubernetes.pod.name — set by most kubelet distributions.
 				ID:    "k8s1",
 				Names: []string{"/kube-apiserver"},
 				State: "running",
@@ -153,12 +154,22 @@ func TestListRunning_ExcludesKubeletContainers(t *testing.T) {
 				},
 			},
 			{
+				// io.kubernetes.pod.namespace — another standard kubelet label.
 				ID:    "k8s2",
 				Names: []string{"/etcd"},
 				State: "running",
 				Labels: map[string]string{
 					"io.kubernetes.pod.name":      "etcd-minikube",
 					"io.kubernetes.pod.namespace": "kube-system",
+				},
+			},
+			{
+				// io.kubernetes.docker.type — Docker Desktop specific label.
+				ID:    "k8s3",
+				Names: []string{"/coredns"},
+				State: "running",
+				Labels: map[string]string{
+					"io.kubernetes.docker.type": "container",
 				},
 			},
 		},

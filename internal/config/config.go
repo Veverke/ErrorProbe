@@ -235,3 +235,105 @@ func homeDir() string {
 	}
 	return h
 }
+
+// ConfigFilePath returns the path of the config file that EP would write to
+// when making programmatic changes (e.g. adding a container to the exclude list).
+//
+// Resolution order (mirrors Load):
+//  1. If projectDir is non-empty → projectDir/errorprobe.yaml
+//  2. If ./errorprobe.yaml exists → ./errorprobe.yaml
+//  3. Fall back to the global ~/.errorprobe/config.yaml
+func ConfigFilePath(projectDir string) string {
+	if projectDir != "" {
+		return filepath.Join(projectDir, "errorprobe.yaml")
+	}
+	local := "errorprobe.yaml"
+	if _, err := os.Stat(local); err == nil {
+		return local
+	}
+	return filepath.Join(homeDir(), ".errorprobe", "config.yaml")
+}
+
+// AppendExclude adds pattern to the containers.exclude list in the config file
+// at cfgPath, preserving all existing content including inline comments.
+//
+// If pattern is already present the file is left unchanged.
+// If cfgPath does not exist it is created with a minimal containers.exclude section.
+func AppendExclude(cfgPath, pattern string) error {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			content := "containers:\n  exclude:\n    - " + pattern + "\n"
+			return os.WriteFile(cfgPath, []byte(content), 0o644)
+		}
+		return fmt.Errorf("reading config %s: %w", cfgPath, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+
+	// Do not add a duplicate.
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if t == "- "+pattern || strings.HasPrefix(t, "- "+pattern+" ") {
+			return nil
+		}
+	}
+
+	// Locate the insertion point by walking the lines with a small state machine.
+	//
+	// States:
+	//   inContainers  — we are inside the containers: block (indent 0)
+	//   inExclude     — we are inside the containers.exclude: block (indent 2)
+	//
+	// insertAfter   = index of last "    - " item in the exclude block (indent 4)
+	// excludeHeader = index of the "  exclude:" line (fallback when list is empty)
+	inContainers := false
+	inExclude := false
+	insertAfter := -1
+	excludeHeader := -1
+
+	for i, line := range lines {
+		noTrail := strings.TrimRight(line, " \t\r")
+		content := strings.TrimLeft(noTrail, " \t")
+		indent := len(noTrail) - len(content)
+		blank := content == "" || strings.HasPrefix(content, "#")
+		if blank {
+			continue
+		}
+
+		if indent == 0 {
+			inContainers = (noTrail == "containers:")
+			inExclude = false
+		} else if inContainers && indent == 2 && strings.HasPrefix(content, "exclude:") {
+			inExclude = true
+			excludeHeader = i
+		} else if inContainers && inExclude && indent == 4 && strings.HasPrefix(content, "- ") {
+			insertAfter = i
+		} else if inExclude && indent <= 2 && !strings.HasPrefix(content, "- ") {
+			// Exited the exclude list (another key at containers level).
+			inExclude = false
+		}
+	}
+
+	newEntry := "    - " + pattern
+
+	if insertAfter >= 0 {
+		out := make([]string, 0, len(lines)+1)
+		out = append(out, lines[:insertAfter+1]...)
+		out = append(out, newEntry)
+		out = append(out, lines[insertAfter+1:]...)
+		return os.WriteFile(cfgPath, []byte(strings.Join(out, "\n")), 0o644)
+	}
+	if excludeHeader >= 0 {
+		// exclude: exists but has no items yet — insert directly after the header.
+		out := make([]string, 0, len(lines)+1)
+		out = append(out, lines[:excludeHeader+1]...)
+		out = append(out, newEntry)
+		out = append(out, lines[excludeHeader+1:]...)
+		return os.WriteFile(cfgPath, []byte(strings.Join(out, "\n")), 0o644)
+	}
+
+	// No containers.exclude section found anywhere — append to the file.
+	content := strings.TrimRight(string(data), "\n") + "\ncontainers:\n  exclude:\n    - " + pattern + "\n"
+	return os.WriteFile(cfgPath, []byte(content), 0o644)
+}

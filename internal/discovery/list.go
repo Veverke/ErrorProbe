@@ -23,11 +23,27 @@ const ManagedLabelValue = "errorprobe"
 // We exclude these because they are managed by K8s, not the user's Docker Compose / CLI.
 const k8sContainerLabel = "io.kubernetes.docker.type"
 
-// k8sPodNameLabel is set by the kubelet on every Docker container it creates, regardless
-// of the Kubernetes distribution (Docker Desktop, minikube, k3s, kind, …).
-// Checking this label catches K8s control-plane containers (kube-apiserver, etcd, …)
-// that do not carry the Docker-Desktop-specific k8sContainerLabel.
-const k8sPodNameLabel = "io.kubernetes.pod.name"
+// k8sLabelPrefix is the standard prefix used by the kubelet and all Kubernetes
+// distributions (Docker Desktop, minikube, k3s, kind, …) to annotate the
+// Docker containers they create.  Checking for the presence of ANY key with
+// this prefix is the most reliable way to identify kubelet-managed containers
+// regardless of which specific labels the distribution happens to set.
+const k8sLabelPrefix = "io.kubernetes."
+
+// hasKubernetesLabel returns true if any label key on a container starts with
+// the standard Kubernetes label prefix.  This covers control-plane pods
+// (kube-apiserver, etcd, coredns, …) across all K8s distributions.
+func hasKubernetesLabel(labels map[string]string) bool {
+	for k := range labels {
+		if strings.HasPrefix(k, k8sLabelPrefix) {
+			return true
+		}
+		if k == k8sContainerLabel {
+			return true
+		}
+	}
+	return false
+}
 
 // ListRunning returns all running user containers, excluding any containers
 // managed by ErrorProbe (those with the label managed-by=errorprobe).
@@ -45,16 +61,12 @@ func ListRunning(ctx context.Context, dockerClient docker.DockerAPI) ([]Containe
 		if s.Labels[ManagedLabel] == ManagedLabelValue {
 			continue
 		}
-		// Exclude Kubernetes infrastructure containers (Docker Desktop exposes them
-		// as regular Docker containers via the Docker API).
-		if _, ok := s.Labels[k8sContainerLabel]; ok {
-			continue
-		}
-		// Exclude any container started by the kubelet (standard label across all
-		// K8s distributions: Docker Desktop, minikube, k3s, kind, …).
-		// This catches control-plane pods (kube-apiserver, etcd, coredns, …) that
-		// do not carry the Docker-Desktop-specific k8sContainerLabel.
-		if _, ok := s.Labels[k8sPodNameLabel]; ok {
+		// Exclude any container bearing a Kubernetes orchestration label.
+		// Checking the "io.kubernetes." prefix covers all kubelet-managed containers
+		// (kube-apiserver, etcd, coredns, …) across Docker Desktop, minikube, k3s,
+		// kind, and similar distributions — regardless of which specific label each
+		// distribution sets.
+		if hasKubernetesLabel(s.Labels) {
 			continue
 		}
 
