@@ -16,7 +16,9 @@ import (
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/ingest"
+	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/loki"
 	"github.com/errorprobe/errorprobe/internal/pid"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
@@ -36,15 +38,14 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 
-		onStatus := func(msg string) {
-			logger.Info(msg)
-		}
+		prog := newCmdProgress()
+		onStatus := prog.OnStatus()
 
 		if err := stack.Up(cmd.Context(), cfg, onStatus); err != nil {
+			prog.Done()
 			return fmt.Errorf("starting stack: %w", err)
 		}
-
-		// Start reconciler — stays running until SIGINT/SIGTERM.
+		prog.Done()
 		cli, err := docker.NewClient()
 		if err != nil {
 			return fmt.Errorf("connecting to docker for reconciler: %w", err)
@@ -74,7 +75,9 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		// Write PID file so 'ep down --purge' can locate and terminate us.
 		pidPath := cfg.StateDir() + "ep.pid"
-		if err := pid.Write(pidPath); err != nil {
+		if err := os.MkdirAll(cfg.StateDir(), 0o755); err != nil {
+			logger.Error("could not create state dir", "err", err)
+		} else if err := pid.Write(pidPath); err != nil {
 			logger.Error("could not write pid file", "err", err)
 		}
 		defer pid.Remove(pidPath)
@@ -84,6 +87,19 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
 			// onChange: snapshot persisted; nothing extra needed in foreground mode.
 		})
+
+		// Initialise the history log and prune old entries on startup.
+		historyPath := cfg.StateDir() + "history.jsonl"
+		historyLog := health.NewHistoryLog(historyPath)
+		if retStr := cfg.HistoryRetention; retStr != "" {
+			if retention, err := config.ParseDuration(retStr); err == nil {
+				if err := historyLog.Prune(retention); err != nil {
+					logger.Error("could not prune history log", "err", err)
+				}
+			} else {
+				logger.Error("invalid history_retention value", "value", retStr, "err", err)
+			}
+		}
 
 		// Start ingest HTTP transport wired to the engine.
 		transport := ingest.NewHTTPTransport(ingestAddr)
@@ -95,8 +111,35 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 			}
 		}()
 
+		// Start Tier 2 evaluator (FAILING state detection via Loki queries).
+		lokiBase := fmt.Sprintf("http://127.0.0.1:%d", cfg.Stack.Loki.Port)
+		lokiClient := loki.NewClient(lokiBase)
+		tier2 := health.NewTier2Evaluator(lokiClient, cfg, engine, historyLog)
+		go tier2.Run(ctx)
+
 		gen := configgen.DefaultGenerator{}
-		reconciler := discovery.NewReconciler(cfg, cli, gen, func() {})
+
+		// Attempt K8s auto-detect; log result for the startup summary.
+		var k8sClient k8s.K8sAPI
+		k8cCli, k8sErr := k8s.NewClient("")
+		if k8sErr == nil {
+			k8sClient = k8cCli
+			logger.Info("kubernetes cluster detected — K8s discovery enabled")
+
+			// Apply Vector DaemonSet inside the cluster so it can read pod logs.
+			vectorCfgTOML, cfgErr := configgen.VectorK8sConfig(cfg)
+			if cfgErr != nil {
+				logger.Error("could not render vector-k8s config", "err", cfgErr)
+			} else if dsErr := k8cCli.ApplyVectorDaemonSet(ctx, cfg.Stack.Vector.Image, vectorCfgTOML); dsErr != nil {
+				logger.Error("could not apply vector daemonset", "err", dsErr)
+			} else {
+				logger.Info("vector daemonset applied")
+			}
+		} else {
+			logger.Info("kubernetes cluster not available — K8s discovery disabled")
+		}
+
+		reconciler := discovery.NewReconciler(cfg, cli, k8sClient, gen, func() {})
 
 		// Delete the state file so the first reconciler tick always regenerates
 		// the Vector config. This is necessary because up.go writes an empty

@@ -27,7 +27,7 @@ type fakeGenerator struct {
 	calls atomic.Int32
 }
 
-func (g *fakeGenerator) GenerateVector(_ *config.Config, _ string, _ []string) error {
+func (g *fakeGenerator) GenerateVector(_ *config.Config, _ string, _ []string, _ []discovery.K8sContainerRef) error {
 	g.calls.Add(1)
 	return g.err
 }
@@ -59,6 +59,12 @@ func (s *stubDockerForReconciler) NetworkExists(_ context.Context, _ string) (bo
 }
 func (s *stubDockerForReconciler) CreateNetwork(_ context.Context, _ string) error { return nil }
 func (s *stubDockerForReconciler) RemoveNetwork(_ context.Context, _ string) error { return nil }
+func (s *stubDockerForReconciler) DisconnectFromNetwork(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *stubDockerForReconciler) DisconnectNetworkEndpoints(_ context.Context, _ string) []string {
+	return nil
+}
 func (s *stubDockerForReconciler) VolumeExists(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
@@ -110,7 +116,7 @@ func newReconcilerForTest(t *testing.T, summaries []container.Summary, listErr e
 	statePath := filepath.Join(dir, "state.json")
 	cfg := buildReconcilerCfg(dir)
 	stub := &stubDockerForReconciler{summaries: summaries, listErr: listErr}
-	r := discovery.NewReconciler(cfg, stub, gen, onReload)
+	r := discovery.NewReconciler(cfg, stub, nil, gen, onReload)
 	discovery.SetReconcilerInterval(r, 20*time.Millisecond)
 	discovery.SetReconcilerStatePath(r, statePath)
 	return r, statePath
@@ -199,7 +205,7 @@ func TestReconciler_ErrorOnList_ContinuesLoop(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
 	cfg := buildReconcilerCfg(dir)
-	r := discovery.NewReconciler(cfg, stub, gen, nil)
+	r := discovery.NewReconciler(cfg, stub, nil, gen, nil)
 	discovery.SetReconcilerInterval(r, 20*time.Millisecond)
 	discovery.SetReconcilerStatePath(r, statePath)
 

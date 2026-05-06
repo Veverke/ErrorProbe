@@ -50,6 +50,7 @@ type Model struct {
 	grafanaBaseURL string
 	cursor         int
 	expanded       bool
+	hScroll        int
 	width          int
 	height         int
 	quitting       bool
@@ -61,6 +62,7 @@ var (
 	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	okStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	borderStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	selectedBg     = lipgloss.NewStyle().Background(lipgloss.Color("237"))
@@ -97,16 +99,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				m.expanded = false
+				m.hScroll = 0
 			}
 		case "down", "j":
 			rows := m.sortedNames()
 			if m.cursor < len(rows)-1 {
 				m.cursor++
-				m.expanded = false
+				m.hScroll = 0
+			}
+		case "left":
+			if m.expanded {
+				m.hScroll -= 10
+				if m.hScroll < 0 {
+					m.hScroll = 0
+				}
+			}
+		case "right":
+			if m.expanded {
+				m.hScroll += 10
 			}
 		case "e":
 			m.expanded = !m.expanded
+			m.hScroll = 0
 		case "r":
 			rows := m.sortedNames()
 			if m.cursor < len(rows) {
@@ -177,29 +191,70 @@ func (m Model) View() string {
 	names := m.sortedNames()
 	n := len(names)
 
+	// Build lookup maps from watch set for infra state and K8s metadata.
+	// Keys are health-snapshot keys (ContainerMeta.HealthKey()), not bare display names.
 	infraState := make(map[string]string, len(m.ws.Containers))
+	containerRuntime := make(map[string]string, len(m.ws.Containers))
+	containerSubtitle := make(map[string]string, len(m.ws.Containers))
+	restartCount := make(map[string]int, len(m.ws.Containers))
+	prevExitMsg := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
-		infraState[c.Name] = c.InfraStatus
+		key := c.HealthKey()
+		infraState[key] = c.InfraStatus
+		containerRuntime[key] = c.Runtime
+		restartCount[key] = c.RestartCount
+		if c.PrevExitMsg != "" {
+			prevExitMsg[key] = c.PrevExitMsg
+		}
+		if c.Runtime == "k8s" && (c.Pod != "" || c.Namespace != "") {
+			containerSubtitle[key] = c.Pod + "  ns=" + c.Namespace
+		}
 	}
 
 	header := m.renderHeader(n)
 
-	// EKG color reflects overall health: green = all OK, yellow = has errors.
+	// EKG color reflects overall health (log errors + infra state).
 	hasErrors := false
+	isFailing := false
 	for _, ch := range m.snap.Containers {
-		if ch.State == health.StateHasErrors {
+		if ch.State == health.StateFailing {
+			isFailing = true
+		} else if ch.State == health.StateHasErrors {
 			hasErrors = true
-			break
+		}
+	}
+	for _, st := range infraState {
+		switch st {
+		case "failed", "error", "crashed", "terminating":
+			isFailing = true
+		case "restarting", "pending", "waiting":
+			if !isFailing {
+				hasErrors = true
+			}
 		}
 	}
 	ekgColor := lipgloss.Color("10") // bright green
-	if hasErrors {
+	if isFailing {
+		ekgColor = lipgloss.Color("9") // bright red
+	} else if hasErrors {
 		ekgColor = lipgloss.Color("11") // bright yellow
 	}
 	ekgSty := lipgloss.NewStyle().Foreground(ekgColor)
 	ekgRows := m.renderEKG(m.width)
 
-	col1W, col2W, col3W, col4W := 22, 20, 12, 22
+	const col2W, col3W = 20, 12
+	// Distribute remaining terminal width evenly between CONTAINER and LAST ERROR.
+	// Table format: │ col1 │ col2 │ col3 │ col4 │  →  5 borders + 8 spaces (1 each side per col)
+	termW := m.width
+	if termW <= 0 {
+		termW = 120
+	}
+	remain := termW - col2W - col3W - 13 // 5 │ + 8 spaces
+	if remain < 44 {
+		remain = 44
+	}
+	col1W := remain / 2
+	col4W := remain - col1W
 
 	padRight := func(s string, w int) string {
 		vis := lipgloss.Width(s)
@@ -208,27 +263,93 @@ func (m Model) View() string {
 		}
 		return s + strings.Repeat(" ", w-vis)
 	}
+	// truncPad truncates s to w runes (adding … if needed) then right-pads to exactly w.
+	truncPad := func(s string, w int) string {
+		runes := []rune(s)
+		if len(runes) > w {
+			s = string(runes[:w-1]) + "…"
+		}
+		vis := lipgloss.Width(s)
+		if vis < w {
+			s = s + strings.Repeat(" ", w-vis)
+		}
+		return s
+	}
 
-	colHeader := padRight("CONTAINER", col1W) + "  " +
-		padRight("FUNCTIONAL", col2W) + "  " +
-		padRight("INFRA", col3W) + "  " +
-		padRight("LAST ERROR", col4W)
+	bar := func(col string, w int) string { return " " + padRight(col, w) + " " }
+	colHeader := borderStyle.Render("│") + bar("[ CONTAINER ]", col1W) +
+		borderStyle.Render("│") + bar("[ STATUS ]", col2W) +
+		borderStyle.Render("│") + bar("[ INFRA ]", col3W) +
+		borderStyle.Render("│") + bar("[ LAST EVENT ]", col4W) +
+		borderStyle.Render("│")
 
-	rows := make([]string, 0, len(names)+6)
+	// Fixed top section: always visible regardless of terminal height.
+	fixedRows := make([]string, 0, len(header)+8)
 	for _, h := range header {
-		rows = append(rows, h)
+		fixedRows = append(fixedRows, h)
 	}
 	if m.statusMsg != "" {
-		rows = append(rows, statusErrStyle.Render("⚠ "+m.statusMsg))
+		fixedRows = append(fixedRows, statusErrStyle.Render("⚠ "+m.statusMsg))
 	}
 	for _, row := range ekgRows {
-		rows = append(rows, ekgSty.Render(row))
+		fixedRows = append(fixedRows, ekgSty.Render(row))
 	}
-	rows = append(rows, borderStyle.Render(repeat("─", 82)))
-	rows = append(rows, colHeader)
-	rows = append(rows, borderStyle.Render(repeat("─", 82)))
+	// sepW = total visible width of the table including borders and padding
+	sepW := 1 + (col1W + 2) + 1 + (col2W + 2) + 1 + (col3W + 2) + 1 + (col4W + 2) + 1
+	hline := func(left, mid, right, fill string) string {
+		return borderStyle.Render(
+			left + repeat(fill, col1W+2) +
+				mid + repeat(fill, col2W+2) +
+				mid + repeat(fill, col3W+2) +
+				mid + repeat(fill, col4W+2) +
+				right)
+	}
+	fixedRows = append(fixedRows, hline("┌", "┬", "┐", "─"))
+	fixedRows = append(fixedRows, colHeader)
+	fixedRows = append(fixedRows, hline("├", "┼", "┤", "─"))
+
+	// Detect whether we have both runtimes for section headers.
+	hasDocker, hasK8s := false, false
+	for _, name := range names {
+		rt := containerRuntime[name]
+		if rt == "docker" {
+			hasDocker = true
+		} else if rt == "k8s" {
+			hasK8s = true
+		}
+	}
+	showSectionHeaders := hasDocker && hasK8s
+	lastRuntime := ""
+
+	// Scrollable content: container rows clipped to the available height.
+	contentRows := make([]string, 0, len(names)*2)
+	cursorStartLine := 0
 
 	for i, name := range names {
+		rt := containerRuntime[name]
+		if rt == "" {
+			rt = "docker"
+		}
+
+		// Emit runtime section header when both runtimes are present.
+		if showSectionHeaders && rt != lastRuntime {
+			var prefix string
+			if rt == "k8s" {
+				prefix = "── kubernetes "
+			} else {
+				prefix = "── docker "
+			}
+			// span full table width; sepW includes the outer │ borders
+			inner := sepW - 2
+			label := "│" + prefix + repeat("─", inner-len([]rune(prefix))) + "│"
+			contentRows = append(contentRows, dimStyle.Render(label))
+			lastRuntime = rt
+		}
+
+		if i == m.cursor {
+			cursorStartLine = len(contentRows)
+		}
+
 		ch := m.snap.Containers[name]
 		infra := infraState[name]
 		if infra == "" {
@@ -243,33 +364,224 @@ func (m Model) View() string {
 			funcText = fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount)
 			funcStyled = errStyle.Render(funcText)
 			if ch.LastErrorAt != nil {
-				lastErr = ch.LastErrorAt.Format("15:04") + " " + truncateRune(ch.LastErrorMsg, 16)
+				lastErr = ch.LastErrorAt.Format("15:04") + " " + humanMsg(ch.LastErrorMsg)
+			} else {
+				lastErr = "—"
+			}
+		case health.StateFailing:
+			funcText = fmt.Sprintf("✗ FAILING %d", ch.ErrorCount)
+			funcStyled = failStyle.Render(funcText)
+			if ch.DominantFingerprintCount > 0 {
+				lastErr = fmt.Sprintf("same pattern %d×", ch.DominantFingerprintCount)
+			} else if ch.LastErrorAt != nil {
+				lastErr = ch.LastErrorAt.Format("15:04") + " " + humanMsg(ch.LastErrorMsg)
 			} else {
 				lastErr = "—"
 			}
 		default:
-			funcText = "✓ OK"
-			funcStyled = okStyle.Render(funcText)
-			lastErr = "—"
+			// Even if no log errors recorded, flag infra-level problems in functional.
+			switch infra {
+			case "restarting":
+				funcText = "⚠ RESTARTING"
+				funcStyled = errStyle.Render(funcText)
+				if pem := prevExitMsg[name]; pem != "" {
+					lastErr = "prev: " + pem
+				} else {
+					lastErr = "infra restart"
+				}
+			case "failed", "error", "crashed", "terminating":
+				funcText = "⚠ INFRA " + strings.ToUpper(infra)
+				funcStyled = failStyle.Render(funcText)
+				lastErr = "infra: " + infra
+			default:
+				funcText = "✓ OK"
+				funcStyled = okStyle.Render(funcText)
+				lastErr = "—"
+			}
 		}
 
-		line := padRight(name, col1W) + "  " +
-			padRight(funcStyled, col2W+len(funcStyled)-len(funcText)) + "  " +
-			padRight(infra, col3W) + "  " +
-			padRight(lastErr, col4W)
-
+		cell := func(s string, w int) string { return " " + truncPad(s, w) + " " }
+		c1 := cell(healthKeyDisplay(name), col1W)
+		c2 := " " + padRight(funcStyled, col2W) + " "
+		// Color infra status: green=running, yellow=restarting/pending, red=error/failed/crashed/unknown
+		var infraStyled string
+		switch infra {
+		case "running":
+			infraStyled = okStyle.Render(infra)
+		case "restarting", "pending", "waiting":
+			infraStyled = errStyle.Render(infra)
+		case "unknown":
+			infraStyled = dimStyle.Render(infra)
+		default:
+			infraStyled = failStyle.Render(infra) // error, failed, crashed, terminating, etc.
+		}
+		c3 := " " + padRight(infraStyled, col3W) + " "
+		c4 := cell(lastErr, col4W)
+		sep := borderStyle.Render("│")
 		if i == m.cursor {
-			line = selectedBg.Render(line)
+			const selBg = "237"
+			// Use combined fg+bg styles so inner ANSI resets don't strip the background.
+			c1 = selectedBg.Render(c1)
+			var selFuncSty lipgloss.Style
+			switch ch.State {
+			case health.StateHasErrors:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(lipgloss.Color(selBg))
+			case health.StateFailing:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(selBg))
+			default:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color(selBg))
+			}
+			c2 = selFuncSty.Render(" " + truncPad(funcText, col2W) + " ")
+			var selInfraSty lipgloss.Style
+			switch infra {
+			case "running":
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color(selBg))
+			case "restarting", "pending", "waiting":
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(lipgloss.Color(selBg))
+			case "unknown":
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color(selBg))
+			default:
+				selInfraSty = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(selBg))
+			}
+			c3 = selInfraSty.Render(" " + truncPad(infra, col3W) + " ")
+			c4 = selectedBg.Render(c4)
+			sep = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Background(lipgloss.Color(selBg)).Render("│")
 		}
-		rows = append(rows, line)
+		line := sep + c1 + sep + c2 + sep + c3 + sep + c4 + sep
+		contentRows = append(contentRows, line)
 
-		// Expanded view: show full last error message
-		if i == m.cursor && m.expanded && ch.State == health.StateHasErrors {
-			rows = append(rows, dimStyle.Render("  "+ch.LastErrorMsg))
+		// Expanded view: show full last error message, infra detail, or restart count.
+		if i == m.cursor && m.expanded {
+			var detail string
+			pem := prevExitMsg[name]
+			rc := restartCount[name]
+			switch ch.State {
+			case health.StateHasErrors:
+				if ch.LastErrorMsg != "" {
+					detail = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+				} else {
+					detail = fmt.Sprintf("⚠  has errors (%d total, no message)", ch.ErrorCount)
+				}
+				if pem != "" {
+					detail += "  │  prev exit: " + pem
+				}
+			case health.StateFailing:
+				if ch.DominantFingerprintCount > 0 {
+					detail = fmt.Sprintf("✗  same pattern %d×: %s", ch.DominantFingerprintCount, ch.LastErrorMsg)
+				} else if ch.LastErrorMsg != "" {
+					detail = fmt.Sprintf("✗  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+				} else {
+					detail = "✗  failing (no message)"
+				}
+				if pem != "" {
+					detail += "  │  prev exit: " + pem
+				}
+			default:
+				// Show infra detail even if no log errors.
+				switch infra {
+				case "restarting":
+					if ch.ErrorCount > 0 && ch.LastErrorMsg != "" {
+						detail = fmt.Sprintf("⚠  current (%d errors): %s", ch.ErrorCount, ch.LastErrorMsg)
+						if pem != "" {
+							detail += "  │  prev exit: " + pem
+						}
+					} else if pem != "" {
+						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  prev exit: %s", rc, pem)
+					} else {
+						detail = fmt.Sprintf("⚠  container restarting  restart count: %d  (no prev exit log)", rc)
+					}
+				case "failed", "error", "crashed", "terminating":
+					detail = fmt.Sprintf("✗  infra status: %s  restart count: %d", infra, rc)
+				default:
+					detail = fmt.Sprintf("✓  no errors recorded  infra: %s", infra)
+				}
+			}
+			// Append K8s pod/namespace subtitle when available.
+			if sub := containerSubtitle[name]; sub != "" {
+				detail += "  ·  " + sub
+			}
+			innerW := col1W + 2 + col2W + 2 + col3W + 2 + col4W + 2 // content width between outer │
+			// Horizontal scroll: show a scrollable window into the full detail string.
+			// Right/Left keys move the window; ◀ ▶ arrows indicate more content.
+			detailRunes := []rune(detail)
+			totalLen := len(detailRunes)
+			hOff := m.hScroll
+			if hOff > totalLen {
+				hOff = totalLen
+			}
+			viewW := innerW - 1 // -1 for leading space
+			hasMore := totalLen > viewW
+			if hasMore {
+				viewW -= 2 // room for ◀ ▶ arrows
+			}
+			if viewW < 1 {
+				viewW = 1
+			}
+			end := hOff + viewW
+			if end > totalLen {
+				end = totalLen
+			}
+			visible := string(detailRunes[hOff:end])
+			pad := viewW - lipgloss.Width(visible)
+			if pad < 0 {
+				pad = 0
+			}
+			var detailLine string
+			if !hasMore {
+				detailLine = " " + visible + strings.Repeat(" ", pad)
+			} else {
+				leftArr, rightArr := " ", " "
+				if hOff > 0 {
+					leftArr = "◀"
+				}
+				if end < totalLen {
+					rightArr = "▶"
+				}
+				detailLine = " " + leftArr + visible + strings.Repeat(" ", pad) + rightArr
+			}
+			contentRows = append(contentRows, borderStyle.Render("│")+dimStyle.Render(detailLine)+borderStyle.Render("│"))
 		}
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+	// Clip content rows to available height, scrolling to keep cursor visible.
+	// Reserve 1 row for the scroll indicator when content overflows.
+	maxContent := m.height - len(fixedRows)
+	if maxContent < 1 {
+		maxContent = 1
+	}
+	needScroll := len(contentRows) > maxContent
+	availH := maxContent
+	if needScroll {
+		availH = maxContent - 1
+		if availH < 1 {
+			availH = 1
+		}
+	}
+
+	scrollTop := 0
+	if len(contentRows) > availH {
+		if cursorStartLine >= availH {
+			scrollTop = cursorStartLine - availH + 1
+		}
+	}
+
+	end := scrollTop + availH
+	if end > len(contentRows) {
+		end = len(contentRows)
+	}
+
+	allRows := make([]string, 0, len(fixedRows)+availH+2)
+	allRows = append(allRows, fixedRows...)
+	allRows = append(allRows, contentRows[scrollTop:end]...)
+	if needScroll {
+		total := len(contentRows)
+		scrollLine := fmt.Sprintf("  ↑↓  %d–%d of %d", scrollTop+1, end, total)
+		allRows = append(allRows, hline("├", "┴", "┤", "─")+" "+dimStyle.Render(scrollLine))
+	} else {
+		allRows = append(allRows, hline("└", "┴", "┘", "─"))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, allRows...)
 }
 
 // renderHeader returns 1 or 2 lines depending on terminal width.
@@ -279,8 +591,8 @@ func (m Model) renderHeader(n int) []string {
 	title := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n))
 	titleW := lipgloss.Width(title)
 
-	hintsAll := "[↑↓] navigate  [e] expand  [r] reset  [g] grafana explore  [o] overview  [q] quit"
-	hintsA := "[↑↓] navigate  [e] expand  [r] reset"
+	hintsAll := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [g] grafana explore  [o] overview  [q] quit"
+	hintsA := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset"
 	hintsB := "[g] grafana explore  [o] overview  [q] quit"
 
 	w := m.width
@@ -301,21 +613,54 @@ func (m Model) renderHeader(n int) []string {
 }
 
 // sortedNames returns a deterministically ordered list of all container names
-// from both the health snapshot and the watch set.
+// from both the health snapshot and the watch set, sorted by runtime then name.
+// sortedNames returns the union of all health keys from the snapshot and the
+// watch set, sorted by runtime then by display name.
+// Keys are ContainerMeta.HealthKey() values ("namespace/container" for K8s,
+// bare name for Docker) — the same keys used in the health snapshot map.
 func (m Model) sortedNames() []string {
 	seen := make(map[string]struct{})
-	for n := range m.snap.Containers {
-		seen[n] = struct{}{}
+	for key := range m.snap.Containers {
+		seen[key] = struct{}{}
 	}
 	for _, c := range m.ws.Containers {
-		seen[c.Name] = struct{}{}
+		seen[c.HealthKey()] = struct{}{}
+	}
+	// Build runtime lookup keyed by health key.
+	rtByKey := make(map[string]string, len(m.ws.Containers))
+	for _, c := range m.ws.Containers {
+		rtByKey[c.HealthKey()] = c.Runtime
 	}
 	names := make([]string, 0, len(seen))
 	for n := range seen {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	sort.Slice(names, func(i, j int) bool {
+		ri := rtByKey[names[i]]
+		if ri == "" {
+			ri = "docker"
+		}
+		rj := rtByKey[names[j]]
+		if rj == "" {
+			rj = "docker"
+		}
+		if ri != rj {
+			return ri < rj
+		}
+		// Sort by display name (last segment of health key) for readability.
+		return healthKeyDisplay(names[i]) < healthKeyDisplay(names[j])
+	})
 	return names
+}
+
+// healthKeyDisplay returns the human-readable container name portion of a health key.
+// For K8s keys ("namespace/container") this is the container part; for Docker keys
+// (bare name) this is the whole string.
+func healthKeyDisplay(key string) string {
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		return key[idx+1:]
+	}
+	return key
 }
 
 // renderEKG returns a 4-row EKG frame by slicing a scrolling window over
@@ -344,6 +689,25 @@ func truncateRune(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// humanMsg extracts the most readable part of a log message for inline display.
+// For logfmt lines it returns the msg="..." field; otherwise it strips structural
+// noise and returns the first ~200 runes.
+func humanMsg(raw string) string {
+	for _, prefix := range []string{`msg="`, `message="`} {
+		if idx := strings.Index(raw, prefix); idx >= 0 {
+			rest := raw[idx+len(prefix):]
+			if end := strings.Index(rest, `"`); end >= 0 && end > 0 {
+				return rest[:end]
+			}
+		}
+	}
+	r := []rune(strings.TrimSpace(raw))
+	if len(r) > 200 {
+		return string(r[:199]) + "…"
+	}
+	return string(r)
 }
 
 func repeat(s string, n int) string {

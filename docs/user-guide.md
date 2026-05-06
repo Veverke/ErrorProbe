@@ -8,13 +8,23 @@
 |---|---|
 | [`up`](#cmd-up) | Start the observability stack and enter the reconciliation loop |
 | [`down`](#cmd-down) | Stop and remove stack containers |
-| [`list`](#cmd-list) | List containers and their watch status |
+| [`list`](#cmd-list) | List Docker and Kubernetes containers and their watch status |
 | [`status`](#cmd-status) | Show health state per container (OK / HAS_ERRORS / FAILING) |
 | [`watch`](#cmd-watch) | Interactive real-time terminal UI |
 | [`logs <container>`](#cmd-logs) | Stream logs for a container from Loki |
 | [`check`](#cmd-check) | Exit non-zero if any container exceeds the fail threshold — for CI use |
 | [`reload`](#cmd-reload) | Re-read config and apply changes without a full restart |
 | [`update`](#cmd-update) | *(Planned)* Pull latest pinned images and restart the stack |
+
+> **`list` vs `check` vs `watch` at a glance**
+>
+> | Command | Data source | Audience | Purpose |
+> |---|---|---|---|
+> | `list` | Live Docker / K8s API | Human | Discovery — which containers exist and whether they match the watch policy. Nothing about health state. |
+> | `check` | Persisted `health.json` snapshot | CI / scripts | Gate — reads the last known health state and exits 0 or 1. Designed to be non-interactive and scriptable. |
+> | `watch` | Persisted `health.json` snapshot | Human | Live monitoring — interactive full-screen TUI that polls for health changes in real time. |
+>
+> `check` and `watch` both read `health.json`, but serve entirely different consumers: `check` is for automation, `watch` is for humans.
 
 ### Command Flags
 
@@ -30,6 +40,7 @@
 **`list`**
 - `--details` — show the container → image → volume breakdown
 - `--json` — output as JSON
+- `--runtime docker|k8s` — filter by runtime
 
 <a name="cmd-status"></a>
 **`status`**
@@ -69,7 +80,7 @@
 
 ## What ErrorProbe Is
 
-ErrorProbe is a **single Go binary** that watches your local Docker containers for errors in real time.
+ErrorProbe is a **single Go binary** that watches your local Docker and Kubernetes containers for errors in real time.
 
 It is a *smoke detector*, not a search engine. It does not wait to be asked — it tells you when something is wrong. Existing tools (Docker Desktop, Grafana Explore) are pull-based: they present data and wait for you to investigate. ErrorProbe is push-based: it answers "what needs my attention right now?" without requiring investigation.
 
@@ -79,8 +90,9 @@ You install one binary. You run one command. Everything else is managed for you.
 
 ## Prerequisites
 
-- **Docker** must be installed and running. That is the only requirement.
-- ErrorProbe uses the Docker API directly — no `docker compose`, no separate runtime.
+- **Docker** must be installed and running.
+- **Kubernetes** (optional) — a local cluster (Docker Desktop K8s, k3s, or minikube) is auto-detected when present. No additional configuration is required; ErrorProbe reads `KUBECONFIG` or `~/.kube/config` automatically.
+- ErrorProbe uses the Docker and Kubernetes APIs directly — no `docker compose`, no separate runtime.
 
 ---
 
@@ -114,12 +126,20 @@ The Loki data source and an Explore view are pre-configured. Query `{container="
 errorprobe list
 ```
 
-Shows every running user container that passes the watch policy, along with its image, Docker status, and whether it is currently in the active watch set.
+Shows every running user container (Docker and Kubernetes) that passes the watch policy, along with its runtime, image, status, and whether it is currently in the active watch set.
 
 ```
-CONTAINER        IMAGE              INFRA STATUS   WATCHING
-payments-api     payments:v2        running        yes
-user-service     user-svc:latest    running        yes
+RUNTIME  CONTAINER        POD              NAMESPACE  IMAGE              INFRA STATUS   WATCHING
+docker   payments-api                                 payments:v2        running        yes
+docker   user-service                                 user-svc:latest    running        yes
+k8s      api/api          api-7f4d6        default    api:v1             running        yes
+```
+
+Filter by runtime:
+
+```
+errorprobe list --runtime docker
+errorprobe list --runtime k8s
 ```
 
 Output as JSON:
@@ -130,30 +150,44 @@ errorprobe list --json
 
 #### Correlating containers, images, and volumes
 
-The `--details` flag shows the full container → image → volume relationship in a single view — the correlation that `docker ps` and `docker inspect` make difficult to see at a glance:
+The `--details` flag shows the full per-container breakdown in a single view — image, status, volumes for Docker containers, and pod/namespace/node for Kubernetes containers:
 
 ```
 errorprobe list --details
 ```
 
+Each entry shows:
+- The container name, watch status, and runtime
+- The exact image it was started from
+- For **Docker** containers: every mount point — named volumes (`[volume: name]`), anonymous volumes, bind mounts (`[bind]`), and tmpfs mounts — each with source path, destination inside the container, and read/write mode
+- For **Kubernetes** containers: pod name, namespace, and node instead of volume information
+
+Docker example:
+
 ```
-payments-api  [watching]
+payments-api  [watching]  runtime=docker
   image:   payments:v2
   status:  running
   volumes:
     [volume: pgdata]  /var/lib/docker/volumes/pgdata/_data → /var/lib/postgresql/data  (rw)
     [bind]            /host/certs → /etc/ssl/certs  (ro)
-────────────────────────────────────────────────────────────────────────────────
-user-service  [watching]
+────────────────────────────────────────────────────
+user-service  [not watching]  runtime=docker
   image:   user-svc:latest
   status:  running
   volumes: (none)
 ```
 
-Each entry shows:
-- The container name and watch status
-- The exact image it was started from
-- Every mount point: named volumes (`[volume: name]`), anonymous volumes, bind mounts (`[bind]`), and tmpfs mounts — each with source path, destination inside the container, and read/write mode
+Kubernetes example:
+
+```
+api/api  [watching]  runtime=k8s
+  image:     api:v1
+  status:    running
+  pod:       api-7f4d6
+  namespace: default
+  node:      docker-desktop
+```
 
 ### 5. Check health state
 
@@ -191,7 +225,7 @@ errorprobe status --json
 errorprobe watch
 ```
 
-Opens a full-screen terminal UI that polls the health snapshot every second and renders a live-updating table of container states.
+Opens a full-screen terminal UI that polls the health snapshot every second and renders a live-updating table of container states. When both Docker and Kubernetes are active, containers are grouped by runtime with section headers.
 
 **Keyboard shortcuts:**
 
@@ -336,6 +370,9 @@ detection:
 
 containers:
   exclude: []
+
+k8s:
+  exclude_namespaces: [kube-system, kube-public, kube-node-lease]
 ```
 
 ### Excluding containers
@@ -347,6 +384,29 @@ containers:
   exclude:
     - my-debug-sidecar
     - temp-*
+```
+
+For Kubernetes containers, two additional pattern prefixes are available:
+
+```yaml
+containers:
+  exclude:
+    - "sidecar-*"           # name match (Docker + K8s)
+    - "namespace/kube-*"    # K8s namespace match
+    - "pod/debug-*"         # K8s pod name match
+```
+
+| Pattern prefix | Matches against |
+|---|---|
+| *(none)* | `ContainerMeta.Name` — applies to both Docker and K8s |
+| `namespace/<glob>` | `ContainerMeta.Namespace` — K8s only |
+| `pod/<glob>` | `ContainerMeta.Pod` — K8s only |
+
+To override the default excluded Kubernetes system namespaces:
+
+```yaml
+k8s:
+  exclude_namespaces: [kube-system, kube-public, kube-node-lease, my-infra]
 ```
 
 Excluded containers are removed from the watch policy entirely: they do not appear in `errorprobe list` and are not included in the Vector log collection config. The exclusion takes effect on the next reconciler tick (within 5 seconds of saving the file, after a reload).
@@ -369,16 +429,20 @@ You never write a Vector TOML, a Loki YAML, or a Grafana datasource config. Erro
 
 ### Discovery
 
-ErrorProbe uses the **Docker API** to enumerate running containers every ~5 seconds. It excludes its own managed containers (identified by the `managed-by: errorprobe` label) and any containers you have excluded in config. The result is the *approved container set* — the set of containers that should be watched.
+ErrorProbe uses the **Docker API** to enumerate running containers every ~5 seconds. It also queries the **Kubernetes API** (if a local cluster is detected) to discover running pods across all non-system namespaces. It excludes its own managed containers (identified by the `managed-by: errorprobe` label) and any containers you have excluded in config. The results from both runtimes are merged and sorted — the combined result is the *approved container set*.
+
+Kubernetes discovery is automatic: ErrorProbe reads `KUBECONFIG` or `~/.kube/config` and calls `IsAvailable` before attempting to list pods. If no cluster is reachable, Kubernetes discovery is silently skipped and only Docker containers are watched.
 
 ### Reconciliation
 
 The reconciler is the loop that runs inside `errorprobe up`. On every tick it:
 
 1. Queries the Docker API for running containers
-2. Applies the watch policy (exclusions, label filters)
-3. Compares the result to the previously persisted watch set
-4. If anything changed: regenerates `vector.toml`, saves the new watch set to `~/.errorprobe/state/containers.json`, then sends a reload signal (SIGHUP) to Vector if Vector is running
+2. If a Kubernetes cluster is available, queries the Kubernetes API for running pods
+3. Merges the two container lists (sorted by runtime, then name)
+4. Applies the watch policy (exclusions, label filters, namespace exclusions)
+5. Compares the result to the previously persisted watch set
+6. If anything changed: regenerates `vector.toml`, saves the new watch set to `~/.errorprobe/state/containers.json`, then sends a reload signal (SIGHUP) to Vector if Vector is running
 
 This means Vector's configuration is always in sync with what is actually running — containers started or stopped after `errorprobe up` are picked up automatically, without a restart.
 

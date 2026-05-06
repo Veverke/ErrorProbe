@@ -92,7 +92,7 @@ Use --since to set the lookback window (e.g. --since 30m). Defaults to 15 minute
 				b, _ := json.Marshal(logEntry{
 					Time:      l.Timestamp.Format(time.RFC3339Nano),
 					Container: containerName,
-					Line:      l.Line,
+					Line:      l.Message,
 				})
 				return string(b)
 			}
@@ -103,10 +103,10 @@ Use --since to set the lookback window (e.g. --since 30m). Defaults to 15 minute
 				var v struct {
 					Raw string `json:"raw"`
 				}
-				if err := json.Unmarshal([]byte(l.Line), &v); err == nil && v.Raw != "" {
+				if err := json.Unmarshal([]byte(l.Message), &v); err == nil && v.Raw != "" {
 					return v.Raw
 				}
-				return l.Line
+				return l.Message
 			}
 		}
 

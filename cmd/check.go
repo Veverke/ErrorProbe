@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -27,10 +28,7 @@ watched container has reached or exceeded the health state configured in fail_on
 
 fail_on values:
   HAS_ERRORS  exit 1 when any container has state HAS_ERRORS or FAILING (default)
-  FAILING     exit 1 only when a container has state FAILING
-
-NOTE: FAILING state requires V2 Tier 2 detection and is not reachable in V1.
-Under fail_on=FAILING, containers in HAS_ERRORS state will pass the check.`,
+  FAILING     exit 1 only when a container has state FAILING (Tier 2 detection required)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {
@@ -67,14 +65,25 @@ Under fail_on=FAILING, containers in HAS_ERRORS state will pass the check.`,
 				return fmt.Errorf("writing JSON output: %w", err)
 			}
 		} else if ok {
-			fmt.Println("All containers healthy")
+			enableListVTP()
+			fmt.Println("\033[92m✓\033[0m All containers healthy")
 		} else {
+			enableListVTP()
 			for _, f := range failing {
-				at := ""
-				if f.LastErrorAt != nil {
-					at = "  at=" + f.LastErrorAt.Local().Format("2006-01-02 15:04:05")
+				var icon string
+				if f.State == string(health.StateFailing) {
+					icon = "\033[91m✗\033[0m"
+				} else {
+					icon = "\033[93m⚠\033[0m"
 				}
-				fmt.Fprintf(os.Stderr, "  %s  state=%s  last_error=%q%s\n", f.Name, f.State, f.LastErrorMsg, at)
+				at := "—"
+				if f.LastErrorAt != nil {
+					at = f.LastErrorAt.Local().Format("2006-01-02 15:04:05")
+				}
+				fmt.Fprintf(os.Stderr, "%s  %-30s  %-15s  %s\n", icon, f.Name, f.State, at)
+				if msg := checkHumanMsg(f.LastErrorMsg); msg != "" {
+					fmt.Fprintf(os.Stderr, "   └─ %s\n", msg)
+				}
 			}
 		}
 
@@ -83,6 +92,34 @@ Under fail_on=FAILING, containers in HAS_ERRORS state will pass the check.`,
 		}
 		return nil
 	},
+}
+
+// healthKeyDisplay returns the human-readable container name from a health key.
+// For K8s compound keys ("namespace/container") this is the container part;
+// for Docker bare-name keys this is the whole string.
+func healthKeyDisplay(key string) string {
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		return key[idx+1:]
+	}
+	return key
+}
+
+// checkHumanMsg extracts the most readable part of a log message.
+// For logfmt it returns msg="..."; otherwise the first ~120 runes.
+func checkHumanMsg(raw string) string {
+	for _, prefix := range []string{`msg="`, `message="`} {
+		if idx := strings.Index(raw, prefix); idx >= 0 {
+			rest := raw[idx+len(prefix):]
+			if end := strings.Index(rest, `"`); end >= 0 && end > 0 {
+				return rest[:end]
+			}
+		}
+	}
+	r := []rune(strings.TrimSpace(raw))
+	if len(r) > 120 {
+		return string(r[:119]) + "…"
+	}
+	return string(r)
 }
 
 // CheckResult is a single failing container entry.
@@ -107,15 +144,15 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 	}
 
 	var failing []CheckResult
-	for name, ch := range snap.Containers {
-		if excluded[name] {
+	for key, ch := range snap.Containers {
+		if excluded[key] || excluded[healthKeyDisplay(key)] {
 			continue
 		}
 		switch failOn {
 		case "HAS_ERRORS":
 			if ch.State == health.StateHasErrors || ch.State == health.StateFailing {
 				failing = append(failing, CheckResult{
-					Name:         name,
+					Name:         healthKeyDisplay(key),
 					State:        string(ch.State),
 					LastErrorAt:  ch.LastErrorAt,
 					LastErrorMsg: ch.LastErrorMsg,
@@ -124,7 +161,7 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 		case "FAILING":
 			if ch.State == health.StateFailing {
 				failing = append(failing, CheckResult{
-					Name:         name,
+					Name:         healthKeyDisplay(key),
 					State:        string(ch.State),
 					LastErrorAt:  ch.LastErrorAt,
 					LastErrorMsg: ch.LastErrorMsg,

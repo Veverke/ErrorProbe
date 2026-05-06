@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 )
@@ -109,15 +110,18 @@ func (c *Client) PullImage(ctx context.Context, img string, onProgress func(stri
 }
 
 // ContainerRunning returns true when a container with the given name is running.
+// It uses ContainerList rather than ContainerInspect so that containers stuck
+// in a transitional state (e.g. "removing") do not cause the call to hang.
 func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error) {
-	info, err := c.cli.ContainerInspect(ctx, name)
+	args := filters.NewArgs(
+		filters.Arg("name", "^/"+name+"$"),
+		filters.Arg("status", "running"),
+	)
+	list, err := c.cli.ContainerList(ctx, container.ListOptions{Filters: args})
 	if err != nil {
-		if errdefs.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("inspecting container %s: %w", name, err)
+		return false, fmt.Errorf("listing container %s: %w", name, err)
 	}
-	return info.State.Running, nil
+	return len(list) > 0, nil
 }
 
 // ContainerID returns the full container ID for the given name, or "" if absent.

@@ -174,3 +174,69 @@ func TestCheck_UnknownFailOn_ReturnsError(t *testing.T) {
 		t.Error("expected error for unsupported fail_on value, got nil")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// T6.14 — check command tests for FAILING state
+// ---------------------------------------------------------------------------
+
+func snapWithFailing(name string) health.HealthSnapshot {
+	snap := health.HealthSnapshot{
+		Containers: map[string]health.ContainerHealth{},
+		SnapshotAt: time.Now(),
+	}
+	now := time.Now()
+	snap.Containers[name] = health.ContainerHealth{
+		Name:                     name,
+		State:                    health.StateFailing,
+		ErrorCount:               20,
+		LastErrorMsg:             "connection refused to db",
+		LastErrorAt:              &now,
+		FirstErrorAt:             &now,
+		DominantFingerprintCount: 20,
+	}
+	return snap
+}
+
+func TestCheck_FAILING_FailOnFailing_ExitsOne(t *testing.T) {
+	snap := snapWithFailing("broken")
+	check := config.Check{FailOn: "FAILING"}
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false for FAILING container with fail_on=FAILING")
+	}
+	if len(failing) != 1 || failing[0].Name != "broken" {
+		t.Errorf("expected failing=[broken], got: %v", failing)
+	}
+}
+
+func TestCheck_HAS_ERRORS_FailOnFailing_ExitsZero(t *testing.T) {
+	snap := snapWithState("noisy", health.StateHasErrors, "minor error")
+	check := config.Check{FailOn: "FAILING"}
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Errorf("expected ok=true for HAS_ERRORS under fail_on=FAILING, got failing: %v", failing)
+	}
+}
+
+func TestCheck_FAILING_FailOnHasErrors_ExitsOne(t *testing.T) {
+	// FAILING is a superset of HAS_ERRORS: fail_on=HAS_ERRORS must still exit 1.
+	snap := snapWithFailing("broken")
+	check := config.Check{FailOn: "HAS_ERRORS"}
+	ok, failing, err := cmd.EvalCheck(snap, check)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false: FAILING should trigger fail_on=HAS_ERRORS")
+	}
+	if len(failing) != 1 {
+		t.Errorf("expected 1 failing entry, got: %v", failing)
+	}
+}
+

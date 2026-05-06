@@ -2,7 +2,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/errorprobe/errorprobe/cmd"
@@ -10,7 +9,7 @@ import (
 
 func main() {
 	if err := cmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		cmd.PrintError(err)
 		os.Exit(1)
 	}
 }

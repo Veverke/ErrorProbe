@@ -3,6 +3,9 @@ errorprobe
 errorprobe.exe
 dist/
 
+# Tilde backups (e.g. ep.exe~)
+*~
+
 # Vendor
 vendor/
 

@@ -3,10 +3,12 @@ package configgen
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
 	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/discovery"
 )
 
 // escapeVRLPattern escapes characters that would break a VRL regex literal
@@ -15,15 +17,45 @@ func escapeVRLPattern(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
-// VectorGenerator is the interface for generating vector.toml.
-// It allows callers (including the reconciler) to inject a fake in tests.
-type VectorGenerator interface {
-	GenerateVector(cfg *config.Config, outputDir string, containers []string) error
+// uniqueNamespaces returns a deduplicated, sorted list of namespace names from refs.
+func uniqueNamespaces(refs []discovery.K8sContainerRef) []string {
+	seen := make(map[string]struct{}, len(refs))
+	for _, r := range refs {
+		seen[r.Namespace] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for ns := range seen {
+		out = append(out, ns)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// namespacePods returns a map of namespace → sorted, deduplicated pod names from refs.
+func namespacePods(refs []discovery.K8sContainerRef) map[string][]string {
+	m := make(map[string]map[string]struct{}, len(refs))
+	for _, r := range refs {
+		if m[r.Namespace] == nil {
+			m[r.Namespace] = make(map[string]struct{})
+		}
+		m[r.Namespace][r.PodName] = struct{}{}
+	}
+	out := make(map[string][]string, len(m))
+	for ns, pods := range m {
+		sorted := make([]string, 0, len(pods))
+		for p := range pods {
+			sorted = append(sorted, p)
+		}
+		sort.Strings(sorted)
+		out[ns] = sorted
+	}
+	return out
 }
 
 // GenerateVector writes vector.toml to outputDir using the embedded template.
-// containers is the list of approved container names to include in the source.
-func GenerateVector(cfg *config.Config, outputDir string, containers []string) error {
+// dockerContainers is the list of approved Docker container names.
+// k8sContainers is the list of K8s containers (pod name + namespace).
+func GenerateVector(cfg *config.Config, outputDir string, dockerContainers []string, k8sContainers []discovery.K8sContainerRef) error {
 	funcMap := template.FuncMap{
 		"escapeVRLPattern": escapeVRLPattern,
 	}
@@ -32,24 +64,43 @@ func GenerateVector(cfg *config.Config, outputDir string, containers []string) e
 		return wrapErr("parsing vector template", err)
 	}
 
+	var sources []string
+	if len(dockerContainers) > 0 {
+		sources = append(sources, "docker_logs")
+	}
+	if len(k8sContainers) > 0 {
+		sources = append(sources, "k8s_filter")
+	}
+	if len(sources) == 0 {
+		sources = []string{"internal_metrics"}
+	}
+
 	data := struct {
-		Containers    []string
-		LokiHost      string
-		LokiPort      int
-		IngestEnabled bool
-		IngestHost    string
-		IngestPort    int
-		ErrorPatterns []string
-		WarnPatterns  []string
+		DockerContainers []string
+		K8sContainers    []discovery.K8sContainerRef
+		UniqueNamespaces []string
+		NamespacePods    map[string][]string
+		Sources          []string
+		LokiHost         string
+		LokiPort         int
+		IngestEnabled    bool
+		IngestHost       string
+		IngestPort       int
+		ErrorPatterns    []string
+		WarnPatterns     []string
 	}{
-		Containers:    containers,
-		LokiHost:      "errorprobe-loki",
-		LokiPort:      cfg.Stack.Loki.Port,
-		IngestEnabled: cfg.Stack.Ingest.Port > 0,
-		IngestHost:    ingestHost(cfg.Stack.Ingest.Bind),
-		IngestPort:    cfg.Stack.Ingest.Port,
-		ErrorPatterns: cfg.Detection.SeverityPatterns.Error,
-		WarnPatterns:  cfg.Detection.SeverityPatterns.Warn,
+		DockerContainers: dockerContainers,
+		K8sContainers:    k8sContainers,
+		UniqueNamespaces: uniqueNamespaces(k8sContainers),
+		NamespacePods:    namespacePods(k8sContainers),
+		Sources:          sources,
+		LokiHost:         "errorprobe-loki",
+		LokiPort:         cfg.Stack.Loki.Port,
+		IngestEnabled:    cfg.Stack.Ingest.Port > 0,
+		IngestHost:       ingestHost(cfg.Stack.Ingest.Bind),
+		IngestPort:       cfg.Stack.Ingest.Port,
+		ErrorPatterns:    cfg.Detection.SeverityPatterns.Error,
+		WarnPatterns:     cfg.Detection.SeverityPatterns.Warn,
 	}
 
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {

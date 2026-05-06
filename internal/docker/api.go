@@ -21,6 +21,11 @@ type DockerAPI interface {
 
 	NetworkExists(ctx context.Context, name string) (bool, error)
 	CreateNetwork(ctx context.Context, name string) error
+	DisconnectFromNetwork(ctx context.Context, networkName, containerName string) error
+	// DisconnectNetworkEndpoints enumerates all containers still connected to
+	// networkName via NetworkInspect and force-disconnects each by container ID.
+	// Returns the names of endpoints that were found (for debug logging).
+	DisconnectNetworkEndpoints(ctx context.Context, networkName string) []string
 	RemoveNetwork(ctx context.Context, name string) error
 
 	StartContainer(ctx context.Context, spec ContainerSpec) error

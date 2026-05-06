@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -14,6 +17,7 @@ type Config struct {
 	Stack            Stack      `mapstructure:"stack"`
 	Detection        Detection  `mapstructure:"detection"`
 	Containers       Containers `mapstructure:"containers"`
+	K8s              K8sConfig  `mapstructure:"k8s"`
 	Check            Check      `mapstructure:"check"`
 	HistoryRetention string     `mapstructure:"history_retention"`
 }
@@ -54,6 +58,14 @@ type IngestConfig struct {
 // Detection holds severity detection settings.
 type Detection struct {
 	SeverityPatterns SeverityPatterns `mapstructure:"severity_patterns"`
+	Tier2            Tier2Config      `mapstructure:"tier2"`
+}
+
+// Tier2Config holds Tier 2 detection settings (FAILING state).
+type Tier2Config struct {
+	Window    string `mapstructure:"window"`    // LogQL duration window, e.g. "3m"
+	Threshold int    `mapstructure:"threshold"` // minimum error count to trigger FAILING
+	Tick      string `mapstructure:"tick"`      // evaluation interval, e.g. "30s"
 }
 
 // SeverityPatterns maps level names to lists of matching strings.
@@ -65,6 +77,13 @@ type SeverityPatterns struct {
 // Containers holds container watch policy.
 type Containers struct {
 	Exclude []string `mapstructure:"exclude"`
+}
+
+// K8sConfig holds Kubernetes discovery settings.
+type K8sConfig struct {
+	// ExcludeNamespaces lists namespaces to exclude from discovery.
+	// Defaults to ["kube-system", "kube-public", "kube-node-lease"] when empty.
+	ExcludeNamespaces []string `mapstructure:"exclude_namespaces"`
 }
 
 // Check holds CI check settings.
@@ -163,10 +182,26 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stack.ingest.bind", "127.0.0.1")
 	v.SetDefault("detection.severity_patterns.error", []string{"ERROR", "FATAL", "panic", "Exception", "error"})
 	v.SetDefault("detection.severity_patterns.warn", []string{"WARN", "WARNING", "warn"})
+	v.SetDefault("detection.tier2.window", "3m")
+	v.SetDefault("detection.tier2.threshold", 10)
+	v.SetDefault("detection.tier2.tick", "30s")
 	v.SetDefault("check.fail_on", "HAS_ERRORS")
 	v.SetDefault("check.exclude", []string{})
 	v.SetDefault("containers.exclude", []string{})
 	v.SetDefault("history_retention", "30d")
+}
+
+// ParseDuration extends time.ParseDuration with support for the "d" (days) suffix.
+// Examples: "30d" → 720h, "72h" → 72h, "3m" → 3m.
+func ParseDuration(s string) (time.Duration, error) {
+	if strings.HasSuffix(s, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
 
 func homeDir() string {

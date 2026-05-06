@@ -14,6 +14,7 @@ import (
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/configgen"
+	"github.com/errorprobe/errorprobe/internal/discovery"
 )
 
 // buildConfig creates a minimal config with the given stack settings.
@@ -208,7 +209,7 @@ func TestGenerateVector_Stub_ValidToml(t *testing.T) {
 	dir := t.TempDir()
 	cfg := buildConfig(3100, "72h", 3000)
 
-	err := configgen.GenerateVector(cfg, dir, []string{})
+	err := configgen.GenerateVector(cfg, dir, []string{}, nil)
 	require.NoError(t, err)
 
 	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
@@ -231,7 +232,7 @@ func TestGenerateVector_FileCreateFails(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := buildConfig(3100, "72h", 3000)
-	err = configgen.GenerateVector(cfg, dir, []string{})
+	err = configgen.GenerateVector(cfg, dir, []string{}, nil)
 	require.Error(t, err)
 }
 
@@ -242,7 +243,7 @@ func TestGenerateVector_MkdirFails(t *testing.T) {
 	require.NoError(t, os.WriteFile(blocker, []byte(""), 0o644))
 
 	cfg := buildConfig(3100, "72h", 3000)
-	err := configgen.GenerateVector(cfg, filepath.Join(blocker, "sub"), []string{})
+	err := configgen.GenerateVector(cfg, filepath.Join(blocker, "sub"), []string{}, nil)
 	require.Error(t, err, "expected error when outputDir cannot be created")
 }
 
@@ -309,7 +310,7 @@ func TestGenerateVector_ParseTemplateFails(t *testing.T) {
 	restore := configgen.SetTemplateFS(badParseFS())
 	t.Cleanup(restore)
 	cfg := buildConfig(3100, "72h", 3000)
-	err := configgen.GenerateVector(cfg, t.TempDir(), []string{})
+	err := configgen.GenerateVector(cfg, t.TempDir(), []string{}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing vector template")
 }
@@ -318,7 +319,7 @@ func TestGenerateVector_ExecuteTemplateFails(t *testing.T) {
 	restore := configgen.SetTemplateFS(badExecFS())
 	t.Cleanup(restore)
 	cfg := buildConfig(3100, "72h", 3000)
-	err := configgen.GenerateVector(cfg, t.TempDir(), []string{})
+	err := configgen.GenerateVector(cfg, t.TempDir(), []string{}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rendering vector template")
 }
@@ -344,7 +345,7 @@ func TestGenerateVector_ContainerListInjected(t *testing.T) {
 	cfg := buildConfigWithPatterns(3100, 8080, nil, nil)
 	containers := []string{"payments-api", "user-service"}
 
-	require.NoError(t, configgen.GenerateVector(cfg, dir, containers))
+	require.NoError(t, configgen.GenerateVector(cfg, dir, containers, nil))
 
 	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
 	require.NoError(t, err)
@@ -357,7 +358,7 @@ func TestGenerateVector_SeverityPatternsFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg := buildConfigWithPatterns(3100, 8080, []string{"FATAL|ERROR"}, []string{"WARN"})
 
-	require.NoError(t, configgen.GenerateVector(cfg, dir, nil))
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil, nil))
 
 	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
 	require.NoError(t, err)
@@ -370,7 +371,7 @@ func TestGenerateVector_LokiSinkURL(t *testing.T) {
 	dir := t.TempDir()
 	cfg := buildConfigWithPatterns(9999, 8080, nil, nil)
 
-	require.NoError(t, configgen.GenerateVector(cfg, dir, nil))
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil, nil))
 
 	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
 	require.NoError(t, err)
@@ -381,7 +382,7 @@ func TestGenerateVector_IngestSinkURL(t *testing.T) {
 	dir := t.TempDir()
 	cfg := buildConfigWithPatterns(3100, 7777, nil, nil)
 
-	require.NoError(t, configgen.GenerateVector(cfg, dir, nil))
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil, nil))
 
 	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
 	require.NoError(t, err)
@@ -392,7 +393,7 @@ func TestGenerateVector_EmptyContainers_ValidToml(t *testing.T) {
 	dir := t.TempDir()
 	cfg := buildConfigWithPatterns(3100, 8080, nil, nil)
 
-	require.NoError(t, configgen.GenerateVector(cfg, dir, []string{}))
+	require.NoError(t, configgen.GenerateVector(cfg, dir, []string{}, nil))
 
 	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
 	require.NoError(t, err)
@@ -407,7 +408,7 @@ func TestGenerateVector_OutputIsValidToml(t *testing.T) {
 	cfg := buildConfigWithPatterns(3100, 8080, []string{"ERROR|FATAL"}, []string{"WARN"})
 	containers := []string{"web", "worker"}
 
-	require.NoError(t, configgen.GenerateVector(cfg, dir, containers))
+	require.NoError(t, configgen.GenerateVector(cfg, dir, containers, nil))
 
 	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
 	require.NoError(t, err)
@@ -416,3 +417,68 @@ func TestGenerateVector_OutputIsValidToml(t *testing.T) {
 	err = toml.NewDecoder(strings.NewReader(string(content))).Decode(&parsed)
 	assert.NoError(t, err, "full vector config must be valid TOML")
 }
+
+// ---------------------------------------------------------------------------
+// T5.14 — Vector K8s config tests
+// ---------------------------------------------------------------------------
+
+func TestGenerateVector_K8sSourceIncluded(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfig(3100, "72h", 3000)
+	k8sRefs := []discovery.K8sContainerRef{
+		{PodName: "api-pod", Namespace: "production"},
+	}
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil, k8sRefs))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "kubernetes_logs")
+}
+
+func TestGenerateVector_K8sLabelsInLoki(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfig(3100, "72h", 3000)
+	k8sRefs := []discovery.K8sContainerRef{
+		{PodName: "worker", Namespace: "default"},
+	}
+	require.NoError(t, configgen.GenerateVector(cfg, dir, nil, k8sRefs))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	// Loki sink should include runtime label
+	assert.Contains(t, string(content), "runtime")
+}
+
+func TestGenerateVector_DockerOnlyUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfig(3100, "72h", 3000)
+
+	require.NoError(t, configgen.GenerateVector(cfg, dir, []string{"web"}, nil))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	body := string(content)
+	assert.Contains(t, body, "docker_logs")
+	assert.NotContains(t, body, "kubernetes_logs")
+}
+
+func TestGenerateVector_BothSourcesPresent(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfig(3100, "72h", 3000)
+	k8sRefs := []discovery.K8sContainerRef{
+		{PodName: "pod-1", Namespace: "staging"},
+	}
+	require.NoError(t, configgen.GenerateVector(cfg, dir, []string{"app"}, k8sRefs))
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	body := string(content)
+	assert.Contains(t, body, "docker_logs")
+	assert.Contains(t, body, "kubernetes_logs")
+
+	var parsed map[string]interface{}
+	err = toml.NewDecoder(strings.NewReader(body)).Decode(&parsed)
+	assert.NoError(t, err, "combined docker+k8s config must be valid TOML")
+}
+
+

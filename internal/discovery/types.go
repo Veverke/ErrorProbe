@@ -20,14 +20,38 @@ type ContainerMeta struct {
 	StartedAt    time.Time
 	RestartCount int
 	InfraStatus  string      // "running" | "restarting" | "exited" | "paused"
-	Runtime      string      // "docker" (K8s added in Phase 5)
-	Mounts       []MountInfo // volumes and bind mounts attached to the container
+	Runtime      string      // "docker" | "k8s"
+	Mounts       []MountInfo // volumes and bind mounts attached to the container (Docker only)
+
+	// K8s-specific fields (zero-valued for Docker containers).
+	Pod         string // pod name
+	Namespace   string // Kubernetes namespace
+	Node        string // node the pod is scheduled on
+	PrevExitMsg string // last error line from previous container instance (K8s only, set on restart)
 }
 
 // WatchSet is the approved set of containers at a point in time.
 type WatchSet struct {
 	Containers  []ContainerMeta
 	GeneratedAt time.Time
+}
+
+// HealthKey returns the canonical key used to cross-reference this container
+// in the health snapshot.
+//
+// For K8s containers (Namespace non-empty) the key is "namespace/container_name",
+// which is stable across pod restarts and unique across namespaces.
+// For Docker containers the key is the bare container name, which Docker enforces
+// to be globally unique on the host.
+//
+// This is the single authoritative implementation — all callers (TUI, status,
+// check, health engine) derive their lookup keys through this method or its
+// LogEvent-side mirror in the health package.
+func (c ContainerMeta) HealthKey() string {
+	if c.Namespace != "" {
+		return c.Namespace + "/" + c.Name
+	}
+	return c.Name
 }
 
 // Diff returns the containers added to and removed from ws relative to previous.
