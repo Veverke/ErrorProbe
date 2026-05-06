@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/ingest"
 	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 )
 
 // LokiQueryClient is the minimal Loki interface required by Tier2Evaluator.
@@ -17,7 +19,7 @@ type LokiQueryClient interface {
 }
 
 // Tier2Evaluator periodically queries Loki for error rates and transitions
-// containers between HAS_ERRORS and FAILING states based on configured thresholds.
+// containers between HAS_ERRORS and FAILING states based on PBR rules.
 type Tier2Evaluator struct {
 	loki    LokiQueryClient
 	cfg     *config.Config
@@ -80,18 +82,37 @@ func (e *Tier2Evaluator) evaluate(ctx context.Context) {
 }
 
 // evalHasErrors checks whether a HAS_ERRORS container should transition to FAILING.
+// It queries Loki for the error count in the configured window, then runs the PBR
+// evaluator with a synthetic log event carrying that count. If a rule matches with
+// state FAILING the container is escalated.
 func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window time.Duration, threshold int) {
 	count, err := e.loki.CountErrors(ctx, name, window)
 	if err != nil {
 		logger.Error("tier2: count errors", "container", name, "err", err)
 		return
 	}
-	if count < threshold {
-		return
+
+	// Build a synthetic LogEvalContext so PBR rules can test count_in_window.
+	syntheticEvent := ingest.LogEvent{Level: "error"}
+	evalCtx := pbr.EvalContext{
+		Log: &pbr.LogEvalContext{
+			Event:         syntheticEvent,
+			CountInWindow: count,
+			Window:        window,
+		},
+	}
+	result := pbr.Evaluate(e.engine.rules, evalCtx)
+	if result.State != "FAILING" {
+		// PBR did not escalate; also check legacy threshold as fallback when count
+		// meets the configured minimum (preserves existing behaviour for installs
+		// that have not written any rules).
+		if count < threshold {
+			return
+		}
 	}
 
 	// Query Loki for the actual error messages within the window to derive
-	// window-scoped fingerprint counts (avoids stale cumulative in-memory counts).
+	// window-scoped fingerprint counts.
 	msgs, err := e.loki.QueryErrorMessages(ctx, name, window)
 	if err != nil {
 		logger.Error("tier2: query error messages", "container", name, "err", err)
@@ -130,8 +151,20 @@ func (e *Tier2Evaluator) evalFailing(ctx context.Context, name string, window ti
 		logger.Error("tier2: count errors (failing)", "container", name, "err", err)
 		return
 	}
-	if count >= threshold {
-		return // still failing
+
+	// Use PBR to decide whether the container should still be FAILING.
+	syntheticEvent := ingest.LogEvent{Level: "error"}
+	evalCtx := pbr.EvalContext{
+		Log: &pbr.LogEvalContext{
+			Event:         syntheticEvent,
+			CountInWindow: count,
+			Window:        window,
+		},
+	}
+	result := pbr.Evaluate(e.engine.rules, evalCtx)
+	stillFailing := result.State == "FAILING" || count >= threshold
+	if stillFailing {
+		return
 	}
 
 	if err := e.engine.SetRecovered(name); err != nil {
@@ -162,3 +195,4 @@ func dominantFingerprint(fps map[string]int) (string, int) {
 	}
 	return best, bestCount
 }
+

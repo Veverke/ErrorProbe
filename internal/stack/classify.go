@@ -2,6 +2,7 @@ package stack
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/errorprobe/errorprobe/internal/config"
 )
@@ -80,6 +81,12 @@ func ClassifyChanges(previous *config.Config, current *config.Config) ChangeSet 
 	if !stringSlicesEqual(previous.Check.Exclude, current.Check.Exclude) {
 		addSoft("check.exclude changed")
 	}
+	if !ruleConfigSlicesEqual(previous.Rules, current.Rules) {
+		addSoft("rules changed")
+	}
+	if !containerOverridesEqual(previous.ContainerOverrides, current.ContainerOverrides) {
+		addSoft("container_overrides changed")
+	}
 
 	return cs
 }
@@ -96,4 +103,15 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// ruleConfigSlicesEqual reports whether two RuleConfig slices have identical
+// contents using deep equality (order-sensitive).
+func ruleConfigSlicesEqual(a, b []config.RuleConfig) bool {
+	return reflect.DeepEqual(a, b)
+}
+
+// containerOverridesEqual reports whether two container-overrides maps are equal.
+func containerOverridesEqual(a, b map[string][]config.RuleConfig) bool {
+	return reflect.DeepEqual(a, b)
 }

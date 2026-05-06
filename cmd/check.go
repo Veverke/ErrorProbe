@@ -18,6 +18,7 @@ import (
 )
 
 var checkJSONOutput bool
+var checkExplain bool
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
@@ -58,6 +59,11 @@ fail_on values:
 		ok, failing, err := evalCheck(snap, cfg.Check)
 		if err != nil {
 			return fmt.Errorf("evaluating check: %w", err)
+		}
+
+		if checkExplain {
+			printExplain(snap)
+			return nil
 		}
 
 		if checkJSONOutput {
@@ -296,4 +302,37 @@ func writeCheckJSON(w io.Writer, ok bool, failing []CheckResult) error {
 
 func init() {
 	checkCmd.Flags().BoolVar(&checkJSONOutput, "json", false, "output result as JSON")
+	checkCmd.Flags().BoolVar(&checkExplain, "explain", false, "print which PBR rule last set the state for each container")
+}
+
+// printExplain prints, for each container in the snapshot, the matched rule name
+// that last set its health state or "no rule matched — default applied".
+func printExplain(snap health.HealthSnapshot) {
+	if len(snap.Containers) == 0 {
+		fmt.Println("No containers tracked yet.")
+		return
+	}
+	// Collect and sort keys for deterministic output.
+	keys := make([]string, 0, len(snap.Containers))
+	for k := range snap.Containers {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+	for _, key := range keys {
+		ch := snap.Containers[key]
+		rule := ch.MatchedRule
+		if rule == "" {
+			rule = "no rule matched — default applied"
+		}
+		fmt.Printf("%-40s  %-15s  rule: %s\n", healthKeyDisplay(key), string(ch.State), rule)
+	}
+}
+
+// sortStrings sorts a string slice in-place (stdlib sort to avoid extra import).
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
 }

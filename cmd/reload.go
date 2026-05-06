@@ -15,6 +15,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/configgen"
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/docker"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
@@ -54,6 +55,12 @@ only the affected containers.`,
 		}
 
 		cs := stack.ClassifyChanges(prevCfg, current)
+
+		// T6.2 / T7.3 — Validate PBR rules before applying any changes.
+		// If the rules are invalid, abort early and keep the old rule set.
+		if _, rulesErr := pbr.Load(current.Rules, current.ContainerOverrides, pbr.BuiltinRules()); rulesErr != nil {
+			return fmt.Errorf("invalid rules configuration: %w", rulesErr)
+		}
 
 		if !cs.HasSoft && !cs.HasHard {
 			fmt.Println("No configuration changes detected")

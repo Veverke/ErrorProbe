@@ -13,16 +13,17 @@ const (
 
 // ContainerHealth holds the current health state for a single container.
 type ContainerHealth struct {
-	Name                   string            `json:"name"`
-	State                  FunctionalState   `json:"state"`
-	ErrorCount             int               `json:"error_count"`
-	FirstErrorAt           *time.Time        `json:"first_error_at,omitempty"`
-	LastErrorAt            *time.Time        `json:"last_error_at,omitempty"`
-	LastErrorMsg           string            `json:"last_error_msg"`
-	LastUpdated            time.Time         `json:"last_updated"`
-	Fingerprints           map[string]int    `json:"fingerprints,omitempty"`           // fingerprint → occurrence count
-	DominantFingerprint    string            `json:"dominant_fingerprint,omitempty"`   // set when FAILING
-	DominantFingerprintCount int             `json:"dominant_fingerprint_count,omitempty"` // count when FAILING
+	Name                     string         `json:"name"`
+	State                    FunctionalState `json:"state"`
+	ErrorCount               int            `json:"error_count"`
+	FirstErrorAt             *time.Time     `json:"first_error_at,omitempty"`
+	LastErrorAt              *time.Time     `json:"last_error_at,omitempty"`
+	LastErrorMsg             string         `json:"last_error_msg"`
+	LastUpdated              time.Time      `json:"last_updated"`
+	Fingerprints             map[string]int `json:"fingerprints,omitempty"`                // fingerprint → occurrence count
+	DominantFingerprint      string         `json:"dominant_fingerprint,omitempty"`        // set when FAILING
+	DominantFingerprintCount int            `json:"dominant_fingerprint_count,omitempty"`  // count when FAILING
+	MatchedRule              string         `json:"matched_rule,omitempty"`                // PBR rule name that last set the state
 }
 
 // HealthSnapshot is an immutable-by-convention snapshot of all container health states.
@@ -106,6 +107,7 @@ func (s *HealthSnapshot) Reset(name string) {
 	ch.Fingerprints = nil
 	ch.DominantFingerprint = ""
 	ch.DominantFingerprintCount = 0
+	ch.MatchedRule = ""
 	ch.LastUpdated = time.Now()
 	s.Containers[name] = ch
 }

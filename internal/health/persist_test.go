@@ -72,7 +72,7 @@ func TestEngine_LoadsExistingSnapshot(t *testing.T) {
 	orig := buildTestSnap()
 	require.NoError(t, SaveSnapshot(path, orig))
 
-	engine := NewEngine(path, nil)
+	engine := NewEngine(path, nil, nil)
 	snap := engine.Snapshot()
 	require.Contains(t, snap.Containers, "api")
 	assert.Equal(t, StateHasErrors, snap.Containers["api"].State)
@@ -95,7 +95,7 @@ func TestEngine_Reset_PersistError(t *testing.T) {
 	path := filepath.Join(dir, "health.json")
 
 	// Create engine with valid path, process a batch to build state.
-	e := NewEngine(path, nil)
+	e := NewEngine(path, nil, nil)
 	e.ProcessBatch([]ingest.LogEvent{
 		{Container: "api", Level: "error", Message: "boom", Timestamp: baseTime},
 	})
@@ -115,7 +115,7 @@ func TestEngine_ProcessBatch_PersistError_DoesNotCrash(t *testing.T) {
 	require.NoError(t, os.WriteFile(blockFile, []byte("x"), 0o644))
 
 	path := filepath.Join(blockFile, "health.json")
-	e := NewEngine(path, nil) // NewEngine: LoadSnapshot fails, that's fine.
+	e := NewEngine(path, nil, nil) // NewEngine: LoadSnapshot fails, that's fine.
 
 	// ProcessBatch should not crash even when SaveSnapshot fails.
 	e.ProcessBatch([]ingest.LogEvent{

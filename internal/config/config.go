@@ -13,13 +13,25 @@ import (
 
 // Config holds the full errorprobe.yaml configuration.
 type Config struct {
-	Version          int        `mapstructure:"version"`
-	Stack            Stack      `mapstructure:"stack"`
-	Detection        Detection  `mapstructure:"detection"`
-	Containers       Containers `mapstructure:"containers"`
-	K8s              K8sConfig  `mapstructure:"k8s"`
-	Check            Check      `mapstructure:"check"`
-	HistoryRetention string     `mapstructure:"history_retention"`
+	Version           int                       `mapstructure:"version"`
+	Stack             Stack                     `mapstructure:"stack"`
+	Detection         Detection                 `mapstructure:"detection"`
+	Containers        Containers                `mapstructure:"containers"`
+	K8s               K8sConfig                 `mapstructure:"k8s"`
+	Check             Check                     `mapstructure:"check"`
+	HistoryRetention  string                    `mapstructure:"history_retention"`
+	Rules             []RuleConfig              `mapstructure:"rules"`
+	ContainerOverrides map[string][]RuleConfig  `mapstructure:"container_overrides"`
+}
+
+// RuleConfig is the raw, unvalidated representation of a PBR rule as loaded
+// from errorprobe.yaml. It is converted into a compiled pbr.Rule by pbr.Load.
+type RuleConfig struct {
+	Name     string            `mapstructure:"name"`
+	Priority int               `mapstructure:"priority"`
+	Match    string            `mapstructure:"match"`
+	When     map[string]string `mapstructure:"when"`
+	SetState string            `mapstructure:"set_state"`
 }
 
 // Stack groups all container image and port settings.

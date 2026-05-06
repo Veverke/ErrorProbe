@@ -42,7 +42,7 @@ func TestListRunningK8s_RunningPodsReturned(t *testing.T) {
 		{Name: "app-1", Namespace: "default", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "web", Image: "nginx:latest", Running: true}}},
 		{Name: "app-2", Namespace: "default", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "api", Image: "api:v1", Running: true}}},
 	}}
-	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg())
+	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg(), nil)
 	require.NoError(t, err)
 	assert.Len(t, result, 2)
 }
@@ -52,7 +52,7 @@ func TestListRunningK8s_NonRunningFiltered(t *testing.T) {
 	stub := &stubK8sAPI{pods: []k8s.PodInfo{
 		{Name: "pending-1", Namespace: "default", Phase: "Pending", Containers: []k8s.ContainerInfo{{Name: "web", Running: false}}},
 	}}
-	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg())
+	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -66,7 +66,7 @@ func TestListRunningK8s_SystemNamespacesExcluded(t *testing.T) {
 		// ErrorProbe's own Vector DaemonSet — must also be excluded by default.
 		{Name: "errorprobe-vector-abcde", Namespace: "errorprobe", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "vector", Running: true}}},
 	}}
-	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg())
+	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -79,7 +79,7 @@ func TestListRunningK8s_MetadataMapping(t *testing.T) {
 			Containers: []k8s.ContainerInfo{{Name: "app", Image: "myapp:1.0", Running: true, RestartCount: 2}},
 		},
 	}}
-	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg())
+	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg(), nil)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	cm := result[0]
@@ -95,7 +95,7 @@ func TestListRunningK8s_RuntimeField(t *testing.T) {
 	stub := &stubK8sAPI{pods: []k8s.PodInfo{
 		{Name: "app", Namespace: "default", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "c1", Running: true}}},
 	}}
-	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg())
+	result, err := discovery.ListRunningK8s(context.Background(), stub, emptyCfg(), nil)
 	require.NoError(t, err)
 	for _, c := range result {
 		assert.Equal(t, "k8s", c.Runtime)
@@ -109,7 +109,7 @@ func TestListRunningK8s_ConfigExclude(t *testing.T) {
 		{Name: "app-pod", Namespace: "default", Phase: "Running", Containers: []k8s.ContainerInfo{{Name: "app", Running: true}}},
 	}}
 	cfg := &config.Config{K8s: config.K8sConfig{ExcludeNamespaces: []string{"monitoring"}}}
-	result, err := discovery.ListRunningK8s(context.Background(), stub, cfg)
+	result, err := discovery.ListRunningK8s(context.Background(), stub, cfg, nil)
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
 	assert.Equal(t, "default", result[0].Namespace)

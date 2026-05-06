@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 )
 
 const reconcileInterval = 5 * time.Second
@@ -36,11 +38,14 @@ type Reconciler struct {
 	onReload  func()
 	interval  time.Duration
 	statePath string
+	rulesMu   sync.RWMutex
+	rules     []pbr.Rule // guarded by rulesMu
 }
 
 // NewReconciler creates a Reconciler with the default interval.
 // k8sClient may be nil if K8s discovery is not desired.
-func NewReconciler(cfg *config.Config, dockerClient docker.DockerAPI, k8sClient k8s.K8sAPI, gen VectorGenerator, onReload func()) *Reconciler {
+// rules is the compiled PBR rule set; pass nil to use built-in defaults.
+func NewReconciler(cfg *config.Config, dockerClient docker.DockerAPI, k8sClient k8s.K8sAPI, gen VectorGenerator, onReload func(), rules []pbr.Rule) *Reconciler {
 	return &Reconciler{
 		cfg:       cfg,
 		docker:    dockerClient,
@@ -49,7 +54,23 @@ func NewReconciler(cfg *config.Config, dockerClient docker.DockerAPI, k8sClient 
 		onReload:  onReload,
 		interval:  reconcileInterval,
 		statePath: cfg.StateDir() + "containers.json",
+		rules:     rules,
 	}
+}
+
+// SetRules atomically replaces the reconciler's compiled rule set.
+// Safe to call concurrently with tick.
+func (r *Reconciler) SetRules(rules []pbr.Rule) {
+	r.rulesMu.Lock()
+	defer r.rulesMu.Unlock()
+	r.rules = rules
+}
+
+// currentRules returns a snapshot of the current rule set.
+func (r *Reconciler) currentRules() []pbr.Rule {
+	r.rulesMu.RLock()
+	defer r.rulesMu.RUnlock()
+	return r.rules
 }
 
 // Run runs the reconciliation loop until ctx is cancelled.
@@ -85,7 +106,7 @@ func (r *Reconciler) tick(ctx context.Context) error {
 	// 2. Optionally discover K8s containers.
 	var k8sRunning []ContainerMeta
 	if r.k8s != nil && r.k8s.IsAvailable(ctx) {
-		k8sRunning, err = ListRunningK8s(ctx, r.k8s, r.cfg)
+		k8sRunning, err = ListRunningK8s(ctx, r.k8s, r.cfg, r.currentRules())
 		if err != nil {
 			logger.Error("listing k8s containers (skipped)", "err", err)
 			k8sRunning = nil

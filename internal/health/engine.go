@@ -8,6 +8,7 @@ import (
 
 	"github.com/errorprobe/errorprobe/internal/ingest"
 	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 )
 
 // Engine maintains the current HealthSnapshot, processes incoming log batches,
@@ -17,15 +18,22 @@ type Engine struct {
 	mu           sync.RWMutex
 	snapshotPath string
 	onChange     func(HealthSnapshot)
+	rules        []pbr.Rule // compiled PBR rule set; guarded by mu
 }
 
 // NewEngine creates an Engine that persists state to snapshotPath and calls
 // onChange (if non-nil) whenever the snapshot changes.
+// rules is the compiled PBR rule set returned by pbr.Load; pass nil to use
+// built-in rules only (BuiltinRules are loaded automatically in that case).
 // On startup it loads any existing snapshot from disk so state survives
 // ErrorProbe restarts.
-func NewEngine(snapshotPath string, onChange func(HealthSnapshot)) *Engine {
+func NewEngine(snapshotPath string, rules []pbr.Rule, onChange func(HealthSnapshot)) *Engine {
+	if rules == nil {
+		rules = pbr.BuiltinRules()
+	}
 	e := &Engine{
 		snapshotPath: snapshotPath,
+		rules:        rules,
 		onChange:     onChange,
 	}
 
@@ -40,8 +48,17 @@ func NewEngine(snapshotPath string, onChange func(HealthSnapshot)) *Engine {
 	return e
 }
 
+// SetRules atomically replaces the engine's compiled rule set.
+// Safe to call concurrently with ProcessBatch.
+func (e *Engine) SetRules(rules []pbr.Rule) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.rules = rules
+}
+
 // ProcessBatch applies a batch of log events to the snapshot.
-// Events whose level is "error" or "warn" are treated as health-degrading.
+// Each event is evaluated through the PBR rule set; events that produce a
+// health-degrading state (HAS_ERRORS or FAILING) update the snapshot.
 // If the snapshot changes it is persisted and onChange is called.
 func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 	e.mu.Lock()
@@ -49,7 +66,15 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 
 	changed := false
 	for _, ev := range events {
-		if ev.Level == "error" || ev.Level == "warn" {
+		result := pbr.Evaluate(e.rules, pbr.EvalContext{
+			Log: &pbr.LogEvalContext{Event: ev},
+		})
+		state := result.State
+		if state == "" {
+			// No rule matched — no state change for this event.
+			continue
+		}
+		if state == "HAS_ERRORS" || state == "FAILING" {
 			key := logEventKey(ev)
 			prevCount := 0
 			if ch, ok := e.snapshot.Containers[key]; ok {
@@ -59,7 +84,17 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
 				changed = true
 			}
-			if ev.Level == "error" {
+			// Apply the PBR-determined state (may be FAILING even on first match).
+			if ch, ok := e.snapshot.Containers[key]; ok {
+				if state == "FAILING" {
+					ch.State = StateFailing
+				}
+				if result.MatchedRule != "" {
+					ch.MatchedRule = result.MatchedRule
+				}
+				e.snapshot.Containers[key] = ch
+			}
+			if strings.EqualFold(ev.Level, "error") {
 				// Track fingerprints for Tier 2 detection (error-level only).
 				e.snapshot.RecordFingerprint(key, Fingerprint(ev.Message))
 			}
