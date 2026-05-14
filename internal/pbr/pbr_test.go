@@ -33,14 +33,14 @@ func logCtxFull(level, message, container, namespace, runtime string, count int,
 }
 
 func infraCtx(name, namespace, runtime string, restartCount int, uptime time.Duration, phase string) EvalContext {
-	return EvalContext{Infra: &InfraEvalContext{Container: InfraContainer{
+	return EvalContext{Infra: &InfraContainer{
 		Name:         name,
 		Namespace:    namespace,
 		Runtime:      runtime,
 		RestartCount: restartCount,
 		Uptime:       uptime,
 		Phase:        phase,
-	}}}
+	}}
 }
 
 func cond(field string, op Operator, value string) Condition {
