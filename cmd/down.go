@@ -51,7 +51,7 @@ func runDown(ctx context.Context, cfg *config.Config, purge bool, prog *cmdProgr
 	// Best-effort: remove Vector DaemonSet from K8s cluster if available.
 	if k8cCli, k8sErr := k8s.NewClient(""); k8sErr == nil {
 		onStatus("removing vector daemonset…")
-		k8sCtx, k8sCancel := context.WithTimeout(ctx, 10*time.Second)
+		k8sCtx, k8sCancel := context.WithTimeout(ctx, 60*time.Second)
 		defer k8sCancel()
 		if dsErr := k8cCli.DeleteVectorDaemonSet(k8sCtx); dsErr != nil {
 			logger.Error("could not delete vector daemonset", "err", dsErr)

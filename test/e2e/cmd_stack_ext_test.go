@@ -192,10 +192,11 @@ func TestRestart_CyclesStack(t *testing.T) {
 	cfg := loadDefaultConfig(t)
 	ensureStackDown(cfg)
 	t.Cleanup(func() { ensureStackDown(cfg) })
-	stdout, stderr, exitCode := runEP(t, tempHome(t), "restart")
+	// restart stays in the foreground (identical to 'ep up'); use a timeout so
+	// the test can verify the stack is running once services are healthy.
+	stdout, stderr, _ := runEPWithTimeout(t, tempHome(t), 90*time.Second, "restart")
 	t.Logf("stdout: %s", stdout)
 	t.Logf("stderr: %s", stderr)
-	require.Equal(t, 0, exitCode, "ep restart must exit 0")
 	cli := newDockerClient(t)
 	defer cli.Close()
 	running, err := stack.IsStackRunning(t.Context(), cfg, cli)
@@ -207,10 +208,11 @@ func TestRestart_Purge(t *testing.T) {
 	cfg := loadDefaultConfig(t)
 	ensureStackDown(cfg)
 	t.Cleanup(func() { ensureStackDown(cfg) })
-	stdout, stderr, exitCode := runEP(t, tempHome(t), "restart", "--purge")
+	// restart stays in the foreground (identical to 'ep up'); use a timeout so
+	// the test can verify the stack is running once services are healthy.
+	stdout, stderr, _ := runEPWithTimeout(t, tempHome(t), 90*time.Second, "restart", "--purge")
 	t.Logf("stdout: %s", stdout)
 	t.Logf("stderr: %s", stderr)
-	require.Equal(t, 0, exitCode, "ep restart --purge must exit 0")
 	cli := newDockerClient(t)
 	defer cli.Close()
 	running, err := stack.IsStackRunning(t.Context(), cfg, cli)

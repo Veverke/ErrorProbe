@@ -19,6 +19,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/loki"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 	"github.com/errorprobe/errorprobe/internal/pid"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
@@ -82,9 +83,16 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		}
 		defer pid.Remove(pidPath)
 
+		// Load and validate PBR rules. On error, report and abort so the user
+		// fixes the config before the stack starts.
+		compiledRules, rulesErr := pbr.Load(cfg.Rules, cfg.ContainerOverrides, pbr.BuiltinRules())
+		if rulesErr != nil {
+			return fmt.Errorf("invalid rules configuration: %w", rulesErr)
+		}
+
 		// Start health engine (loads persisted state if present).
 		snapshotPath := cfg.StateDir() + "health.json"
-		engine := health.NewEngine(snapshotPath, func(_ health.HealthSnapshot) {
+		engine := health.NewEngine(snapshotPath, compiledRules, func(_ health.HealthSnapshot) {
 			// onChange: snapshot persisted; nothing extra needed in foreground mode.
 		})
 
@@ -139,7 +147,7 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 			logger.Info("kubernetes cluster not available — K8s discovery disabled")
 		}
 
-		reconciler := discovery.NewReconciler(cfg, cli, k8sClient, gen, func() {})
+		reconciler := discovery.NewReconciler(cfg, cli, k8sClient, gen, func() {}, compiledRules)
 
 		// Delete the state file so the first reconciler tick always regenerates
 		// the Vector config. This is necessary because up.go writes an empty
@@ -147,7 +155,32 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		// skip regeneration if the container set hasn't changed since last run.
 		_ = os.Remove(cfg.StateDir() + "containers.json")
 
-		return reconciler.Run(ctx)
+		// Run the reconciler in a goroutine so we can also handle SIGHUP for
+		// live PBR rule reloads (T7.3).
+		hupc := listenReloadSignal()
+		recErrCh := make(chan error, 1)
+		go func() { recErrCh <- reconciler.Run(ctx) }()
+
+		for {
+			select {
+			case err := <-recErrCh:
+				return err
+			case <-hupc:
+				newCfg, cfgErr := config.Load(cfgFile)
+				if cfgErr != nil {
+					logger.Error("rule hot-reload: failed to load config", "err", cfgErr)
+					continue
+				}
+				newRules, rulesErr := pbr.Load(newCfg.Rules, newCfg.ContainerOverrides, pbr.BuiltinRules())
+				if rulesErr != nil {
+					logger.Error("rule hot-reload: invalid rules — keeping old rules", "err", rulesErr)
+					continue
+				}
+				engine.SetRules(newRules)
+				reconciler.SetRules(newRules)
+				logger.Info("PBR rules hot-reloaded")
+			}
+		}
 	},
 }
 

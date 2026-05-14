@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -46,8 +47,11 @@ func (c *Client) ApplyVectorDaemonSet(ctx context.Context, image, vectorConfigTO
 	return nil
 }
 
-// DeleteVectorDaemonSet removes the Vector DaemonSet and supporting resources.
-// Errors are non-fatal if the resource does not exist.
+// DeleteVectorDaemonSet removes the Vector DaemonSet and supporting resources,
+// then polls until the DaemonSet is fully gone from the API server. This
+// prevents ApplyVectorDaemonSet from racing against a still-terminating
+// DaemonSet (which has DeletionTimestamp set) and silently re-using it only
+// to have K8s delete it moments later once all pods have terminated.
 func (c *Client) DeleteVectorDaemonSet(ctx context.Context) error {
 	del := metav1.DeletePropagationForeground
 	opts := metav1.DeleteOptions{PropagationPolicy: &del}
@@ -57,6 +61,19 @@ func (c *Client) DeleteVectorDaemonSet(ctx context.Context) error {
 	_ = c.cs.RbacV1().ClusterRoleBindings().Delete(ctx, daemonSetName, metav1.DeleteOptions{})
 	_ = c.cs.RbacV1().ClusterRoles().Delete(ctx, daemonSetName, metav1.DeleteOptions{})
 	_ = c.cs.CoreV1().ServiceAccounts(daemonSetNamespace).Delete(ctx, daemonSetName, metav1.DeleteOptions{})
+
+	// Poll until the DaemonSet is gone (404) so callers can safely re-create it.
+	for {
+		_, err := c.cs.AppsV1().DaemonSets(daemonSetNamespace).Get(ctx, daemonSetName, metav1.GetOptions{})
+		if k8serrors.IsNotFound(err) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil // best-effort: caller context expired, proceed anyway
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 	return nil
 }
 

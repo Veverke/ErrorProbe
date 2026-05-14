@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/errorprobe/errorprobe/internal/config"
-	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
 var restartPurgeFlag bool
@@ -18,8 +17,7 @@ var restartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Stop the stack then bring it back up",
 	Long: `Stop all ErrorProbe-managed containers (equivalent to 'ep down'), then
-start them again and exit once all services are healthy. Unlike 'ep up',
-restart does not stay in the foreground.
+immediately start them again (equivalent to 'ep up').
 
 If 'down' encounters an error you are prompted whether to proceed with 'up'
 anyway; answering no exits with an error so the failure is visible in scripts.
@@ -49,10 +47,7 @@ Use --purge to wipe volumes and config before restarting (full clean restart).`,
 		// ── phase 2: up ──────────────────────────────────────────────────────
 		fmt.Println()
 		fmt.Println("  ── up ──────────────────────────────────────────────────")
-		prog2 := newCmdProgress()
-		upErr := stack.Up(cmd.Context(), cfg, prog2.OnStatus())
-		prog2.DoneErr(upErr)
-		return upErr
+		return upCmd.RunE(cmd, args)
 	},
 }
 

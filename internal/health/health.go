@@ -1,6 +1,9 @@
 package health
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // FunctionalState represents the derived health state for a container.
 type FunctionalState string
@@ -13,22 +16,35 @@ const (
 
 // ContainerHealth holds the current health state for a single container.
 type ContainerHealth struct {
-	Name                   string            `json:"name"`
-	State                  FunctionalState   `json:"state"`
-	ErrorCount             int               `json:"error_count"`
-	FirstErrorAt           *time.Time        `json:"first_error_at,omitempty"`
-	LastErrorAt            *time.Time        `json:"last_error_at,omitempty"`
-	LastErrorMsg           string            `json:"last_error_msg"`
-	LastUpdated            time.Time         `json:"last_updated"`
-	Fingerprints           map[string]int    `json:"fingerprints,omitempty"`           // fingerprint → occurrence count
-	DominantFingerprint    string            `json:"dominant_fingerprint,omitempty"`   // set when FAILING
-	DominantFingerprintCount int             `json:"dominant_fingerprint_count,omitempty"` // count when FAILING
+	Name                     string         `json:"name"`
+	State                    FunctionalState `json:"state"`
+	ErrorCount               int            `json:"error_count"`
+	FirstErrorAt             *time.Time     `json:"first_error_at,omitempty"`
+	LastErrorAt              *time.Time     `json:"last_error_at,omitempty"`
+	LastErrorMsg             string         `json:"last_error_msg"`
+	LastUpdated              time.Time      `json:"last_updated"`
+	Fingerprints             map[string]int `json:"fingerprints,omitempty"`                // fingerprint → occurrence count
+	DominantFingerprint      string         `json:"dominant_fingerprint,omitempty"`        // set when FAILING
+	DominantFingerprintCount int            `json:"dominant_fingerprint_count,omitempty"`  // count when FAILING
+	MatchedRule              string         `json:"matched_rule,omitempty"`                // PBR rule name that last set the state
 }
 
 // HealthSnapshot is an immutable-by-convention snapshot of all container health states.
 type HealthSnapshot struct {
 	Containers map[string]ContainerHealth `json:"containers"`
 	SnapshotAt time.Time                  `json:"snapshot_at"`
+}
+
+// hasErrorKeyword reports whether s contains a word that marks it as an error
+// header (exception class, fatal message, panic) rather than a stack-frame or
+// continuation line.  Used by SetError to avoid overwriting an informative error
+// header with a less-informative follow-on line such as "   at …".
+func hasErrorKeyword(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "exception") ||
+		strings.Contains(lower, "error") ||
+		strings.Contains(lower, "fatal") ||
+		strings.Contains(lower, "panic")
 }
 
 // SetError upserts the container entry, flipping state to HAS_ERRORS and incrementing count.
@@ -45,7 +61,13 @@ func (s *HealthSnapshot) SetError(name, msg string, at time.Time) {
 		ch.State = StateHasErrors
 	}
 	ch.ErrorCount++
-	ch.LastErrorMsg = msg
+	// Only overwrite LastErrorMsg when the incoming message is at least as
+	// informative as the one already stored.  This prevents stack-frame lines
+	// (e.g. "   at Microsoft.Win32.SafeHandles…") from replacing the exception
+	// header that names the actual error.
+	if ch.LastErrorMsg == "" || !hasErrorKeyword(ch.LastErrorMsg) || hasErrorKeyword(msg) {
+		ch.LastErrorMsg = msg
+	}
 	ch.LastUpdated = at
 	if ch.FirstErrorAt == nil {
 		t := at
@@ -106,6 +128,7 @@ func (s *HealthSnapshot) Reset(name string) {
 	ch.Fingerprints = nil
 	ch.DominantFingerprint = ""
 	ch.DominantFingerprintCount = 0
+	ch.MatchedRule = ""
 	ch.LastUpdated = time.Now()
 	s.Containers[name] = ch
 }

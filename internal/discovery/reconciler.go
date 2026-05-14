@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 )
 
 const reconcileInterval = 5 * time.Second
@@ -36,11 +38,14 @@ type Reconciler struct {
 	onReload  func()
 	interval  time.Duration
 	statePath string
+	rulesMu   sync.RWMutex
+	rules     []pbr.Rule // guarded by rulesMu
 }
 
 // NewReconciler creates a Reconciler with the default interval.
 // k8sClient may be nil if K8s discovery is not desired.
-func NewReconciler(cfg *config.Config, dockerClient docker.DockerAPI, k8sClient k8s.K8sAPI, gen VectorGenerator, onReload func()) *Reconciler {
+// rules is the compiled PBR rule set; pass nil to use built-in defaults.
+func NewReconciler(cfg *config.Config, dockerClient docker.DockerAPI, k8sClient k8s.K8sAPI, gen VectorGenerator, onReload func(), rules []pbr.Rule) *Reconciler {
 	return &Reconciler{
 		cfg:       cfg,
 		docker:    dockerClient,
@@ -49,7 +54,23 @@ func NewReconciler(cfg *config.Config, dockerClient docker.DockerAPI, k8sClient 
 		onReload:  onReload,
 		interval:  reconcileInterval,
 		statePath: cfg.StateDir() + "containers.json",
+		rules:     rules,
 	}
+}
+
+// SetRules atomically replaces the reconciler's compiled rule set.
+// Safe to call concurrently with tick.
+func (r *Reconciler) SetRules(rules []pbr.Rule) {
+	r.rulesMu.Lock()
+	defer r.rulesMu.Unlock()
+	r.rules = rules
+}
+
+// currentRules returns a snapshot of the current rule set.
+func (r *Reconciler) currentRules() []pbr.Rule {
+	r.rulesMu.RLock()
+	defer r.rulesMu.RUnlock()
+	return r.rules
 }
 
 // Run runs the reconciliation loop until ctx is cancelled.
@@ -85,7 +106,7 @@ func (r *Reconciler) tick(ctx context.Context) error {
 	// 2. Optionally discover K8s containers.
 	var k8sRunning []ContainerMeta
 	if r.k8s != nil && r.k8s.IsAvailable(ctx) {
-		k8sRunning, err = ListRunningK8s(ctx, r.k8s, r.cfg)
+		k8sRunning, err = ListRunningK8s(ctx, r.k8s, r.cfg, r.currentRules())
 		if err != nil {
 			logger.Error("listing k8s containers (skipped)", "err", err)
 			k8sRunning = nil
@@ -139,10 +160,39 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		GeneratedAt: time.Now(),
 	}
 
+	// Detect infra-status changes on containers whose ID is unchanged but whose
+	// InfraStatus flipped (e.g. "restarting" → "running").  Diff only tracks
+	// structural adds/removes by ID, so without this check a container that
+	// stabilises after a restart loop would stay marked "restarting" in the saved
+	// watch set forever — the TUI reads the file every second and would never see
+	// the updated state.
+	//
+	// We only care about transitions *away from* a degraded state; ignoring the
+	// empty→"running" case avoids spurious reloads when the watch set was seeded
+	// without an InfraStatus (e.g. on first discovery or in tests).
+	isDegraded := func(s string) bool {
+		switch s {
+		case "restarting", "failed", "error", "crashed", "terminating", "pending", "waiting":
+			return true
+		}
+		return false
+	}
+	prevByID := make(map[string]ContainerMeta, len(previous.Containers))
+	for _, c := range previous.Containers {
+		prevByID[c.ID] = c
+	}
+	infraStatusChanged := false
+	for _, c := range approved {
+		if prev, ok := prevByID[c.ID]; ok && isDegraded(prev.InfraStatus) && c.InfraStatus != prev.InfraStatus {
+			infraStatusChanged = true
+			break
+		}
+	}
+
 	// 5. Diff — skip if nothing changed.
 	added, removed := current.Diff(previous)
 	structureChanged := len(added) > 0 || len(removed) > 0
-	if !structureChanged && !restartDiagChanged {
+	if !structureChanged && !restartDiagChanged && !infraStatusChanged {
 		return nil
 	}
 	for _, c := range added {
@@ -221,6 +271,14 @@ func prevExitLine(logs string) string {
 		}
 		return s
 	}
+	// isKubeletNoise returns true for container-runtime log-management messages
+	// emitted by containerd/runc when cleaning up the pod log directory after exit
+	// (e.g. "failed to try resolving symlinks in path /var/log/pods/…").
+	// These are never written by the application and always contain both "symlink"
+	// and the kubelet-specific path prefix "/var/log/pods/".
+	isKubeletNoise := func(lower string) bool {
+		return strings.Contains(lower, "symlink") && strings.Contains(lower, "/var/log/pods/")
+	}
 	// Prefer lines that contain an error keyword.
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -228,16 +286,22 @@ func prevExitLine(logs string) string {
 			continue
 		}
 		lower := strings.ToLower(line)
+		if isKubeletNoise(lower) {
+			continue
+		}
 		if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") ||
 			strings.Contains(lower, "panic") || strings.Contains(lower, "exception") ||
 			strings.Contains(lower, "failed") {
 			return truncate(line)
 		}
 	}
-	// Fallback: last non-empty line.
+	// Fallback: last non-empty line that is not kubelet noise.
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line != "" {
+		if line == "" {
+			continue
+		}
+		if !isKubeletNoise(strings.ToLower(line)) {
 			return truncate(line)
 		}
 	}

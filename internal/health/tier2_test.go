@@ -70,7 +70,7 @@ func populateFingerprints(e *Engine, container, msg string, n int) {
 
 func TestTier2Evaluator_BelowThreshold_NoTransition(t *testing.T) {
 	dir := t.TempDir()
-	e := NewEngine(filepath.Join(dir, "health.json"), nil)
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
 	populateFingerprints(e, "api", "connection refused", 5)
 
 	loki := &mockLokiClient{count: 5} // below threshold of 10
@@ -84,7 +84,7 @@ func TestTier2Evaluator_BelowThreshold_NoTransition(t *testing.T) {
 
 func TestTier2Evaluator_ThresholdMet_TransitionsToFailing(t *testing.T) {
 	dir := t.TempDir()
-	e := NewEngine(filepath.Join(dir, "health.json"), nil)
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
 	// 15 identical errors → dominant fingerprint count = 15 ≥ threshold 10
 	populateFingerprints(e, "api", "connection refused to postgres", 15)
 
@@ -101,7 +101,7 @@ func TestTier2Evaluator_ThresholdMet_TransitionsToFailing(t *testing.T) {
 
 func TestTier2Evaluator_RateDrops_RecoverToHasErrors(t *testing.T) {
 	dir := t.TempDir()
-	e := NewEngine(filepath.Join(dir, "health.json"), nil)
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
 	populateFingerprints(e, "api", "disk full", 20)
 
 	// First tick: count ≥ threshold → FAILING
@@ -121,7 +121,7 @@ func TestTier2Evaluator_RateDrops_RecoverToHasErrors(t *testing.T) {
 
 func TestTier2Evaluator_AppendHistoryOnTransition(t *testing.T) {
 	dir := t.TempDir()
-	e := NewEngine(filepath.Join(dir, "health.json"), nil)
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
 	populateFingerprints(e, "api", "timeout connecting to cache", 12)
 
 	histPath := filepath.Join(dir, "history.jsonl")
@@ -142,7 +142,7 @@ func TestTier2Evaluator_AppendHistoryOnTransition(t *testing.T) {
 
 func TestTier2Evaluator_MultipleContainers_IndependentEvaluation(t *testing.T) {
 	dir := t.TempDir()
-	e := NewEngine(filepath.Join(dir, "health.json"), nil)
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
 
 	// "highrate" has 15 identical errors → should transition to FAILING
 	populateFingerprints(e, "highrate", "out of memory", 15)

@@ -94,6 +94,11 @@ func Error(msg string, fields ...any) {
 	write(os.Stderr, "ERROR", msg, fields...)
 }
 
+// Warn logs a message at WARN level to file and stderr.
+func Warn(msg string, fields ...any) {
+	write(os.Stderr, "WARN", msg, fields...)
+}
+
 // Debug logs a message at DEBUG level to file only; suppressed unless debug mode is on.
 func Debug(msg string, fields ...any) {
 	mu.Lock()

@@ -32,7 +32,7 @@ import (
 
 func TestIngest_ErrorLog_SetsHasErrors(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
 
 	status := postEvents(t, addr, []ingest.LogEvent{logEvent("myapp", "error", "connection refused")})
@@ -48,7 +48,7 @@ func TestIngest_ErrorLog_SetsHasErrors(t *testing.T) {
 
 func TestIngest_WarnLog_SetsHasErrors(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
 
 	status := postEvents(t, addr, []ingest.LogEvent{logEvent("svc", "warn", "high latency 500ms")})
@@ -61,7 +61,7 @@ func TestIngest_WarnLog_SetsHasErrors(t *testing.T) {
 
 func TestIngest_InfoLog_DoesNotChangeState(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
 
 	postEvents(t, addr, []ingest.LogEvent{logEvent("svc", "info", "application started")})
@@ -76,7 +76,7 @@ func TestIngest_MultiLineError_Concatenated(t *testing.T) {
 	// The engine performs a "continuation pass": when a stored error ends with ":"
 	// it searches the same batch for a follow-on line and appends it.
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
 
 	events := []ingest.LogEvent{
@@ -98,7 +98,7 @@ func TestIngest_MultiLineError_Concatenated(t *testing.T) {
 func TestIngest_K8sNamespacedKey(t *testing.T) {
 	// K8s events carry a Namespace field; the health key must be "namespace/container".
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
 
 	ev := ingest.LogEvent{
@@ -120,7 +120,7 @@ func TestIngest_K8sNamespacedKey(t *testing.T) {
 
 func TestIngest_BatchTooLarge_Returns413(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
 
 	// Build a body that exceeds the 10 MB server-side limit.
@@ -132,7 +132,7 @@ func TestIngest_BatchTooLarge_Returns413(t *testing.T) {
 
 func TestIngest_MultipleContainers_TrackedIndependently(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
 
 	postEvents(t, addr, []ingest.LogEvent{
@@ -157,7 +157,7 @@ func TestHealth_PersistsAcrossEngineRestart(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
 
 	// First engine instance accumulates an error.
-	e1 := health.NewEngine(snapPath, nil)
+	e1 := health.NewEngine(snapPath, nil, nil)
 	e1.ProcessBatch([]ingest.LogEvent{logEvent("worker", "error", "out of memory")})
 
 	snap1, err := health.LoadSnapshot(snapPath)
@@ -165,7 +165,7 @@ func TestHealth_PersistsAcrossEngineRestart(t *testing.T) {
 	require.Equal(t, health.StateHasErrors, snap1.Containers["worker"].State)
 
 	// Simulate a process restart: new engine, same snapshot path.
-	e2 := health.NewEngine(snapPath, nil)
+	e2 := health.NewEngine(snapPath, nil, nil)
 	snap2 := e2.Snapshot()
 
 	assert.Equal(t, health.StateHasErrors, snap2.Containers["worker"].State,
@@ -180,7 +180,7 @@ func TestHealth_PersistsAcrossEngineRestart(t *testing.T) {
 
 func TestStatus_Reset_ClearsState(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	engine.ProcessBatch([]ingest.LogEvent{logEvent("api", "error", "timeout connecting to database")})
 
 	require.Equal(t, health.StateHasErrors, engine.Snapshot().Containers["api"].State)
@@ -228,7 +228,7 @@ func tier2Cfg(tickDur string, threshold int) *config.Config {
 
 func TestTier2_RepeatedErrors_SetsFailingState(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	engine.ProcessBatch([]ingest.LogEvent{
 		logEvent("payments-api", "error", "connection refused"),
 	})
@@ -254,7 +254,7 @@ func TestTier2_RepeatedErrors_SetsFailingState(t *testing.T) {
 
 func TestTier2_DominantFingerprint_Recorded(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	engine.ProcessBatch([]ingest.LogEvent{
 		logEvent("svc", "error", "timeout waiting for db connection"),
 	})
@@ -282,7 +282,7 @@ func TestTier2_DominantFingerprint_Recorded(t *testing.T) {
 
 func TestTier2_ErrorRateDrops_RecoverToHasErrors(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	engine.ProcessBatch([]ingest.LogEvent{logEvent("db", "error", "crash")})
 
 	// Force the container directly into FAILING to set up the recovery scenario.
@@ -309,7 +309,7 @@ func TestTier2_HistoryLog_AppendedOnTransition(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
 	histPath := filepath.Join(t.TempDir(), "history.jsonl")
 
-	engine := health.NewEngine(snapPath, nil)
+	engine := health.NewEngine(snapPath, nil, nil)
 	engine.ProcessBatch([]ingest.LogEvent{logEvent("app", "error", "segmentation fault")})
 
 	mock := &mockLokiClient{

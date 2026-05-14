@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/ingest"
 	"github.com/errorprobe/errorprobe/internal/logger"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 )
 
 // LokiQueryClient is the minimal Loki interface required by Tier2Evaluator.
@@ -17,7 +19,7 @@ type LokiQueryClient interface {
 }
 
 // Tier2Evaluator periodically queries Loki for error rates and transitions
-// containers between HAS_ERRORS and FAILING states based on configured thresholds.
+// containers between HAS_ERRORS and FAILING states based on PBR rules.
 type Tier2Evaluator struct {
 	loki    LokiQueryClient
 	cfg     *config.Config
@@ -80,21 +82,43 @@ func (e *Tier2Evaluator) evaluate(ctx context.Context) {
 }
 
 // evalHasErrors checks whether a HAS_ERRORS container should transition to FAILING.
+// It queries Loki for the error count in the configured window, then runs the PBR
+// evaluator with a synthetic log event carrying that count. If a rule matches with
+// state FAILING the container is escalated.
 func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window time.Duration, threshold int) {
 	count, err := e.loki.CountErrors(ctx, name, window)
 	if err != nil {
-		logger.Error("tier2: count errors", "container", name, "err", err)
-		return
-	}
-	if count < threshold {
+		logger.Warn("tier2: count errors", "container", name, "err", err)
 		return
 	}
 
+	// Build a synthetic LogEvalContext so PBR rules can test count_in_window.
+	syntheticEvent := ingest.LogEvent{Level: "error"}
+	evalCtx := pbr.EvalContext{
+		Log: &pbr.LogEvalContext{
+			Event:         syntheticEvent,
+			CountInWindow: count,
+			Window:        window,
+		},
+	}
+	result := pbr.Evaluate(e.engine.Rules(), evalCtx)
+	if result.State != "FAILING" {
+		// PBR evaluated but did not escalate to FAILING — respect the result.
+		// Only apply the legacy count-threshold fallback when PBR matched no
+		// rule at all (empty State), which preserves existing behaviour for
+		// installs that have not configured any rules.  When a user rule did
+		// match (result.State != ""), the rule is authoritative and the legacy
+		// fallback is skipped so it cannot silently override the user's intent.
+		if result.State != "" || count < threshold {
+			return
+		}
+	}
+
 	// Query Loki for the actual error messages within the window to derive
-	// window-scoped fingerprint counts (avoids stale cumulative in-memory counts).
+	// window-scoped fingerprint counts.
 	msgs, err := e.loki.QueryErrorMessages(ctx, name, window)
 	if err != nil {
-		logger.Error("tier2: query error messages", "container", name, "err", err)
+		logger.Warn("tier2: query error messages", "container", name, "err", err)
 		return
 	}
 	fpCounts := make(map[string]int, len(msgs))
@@ -127,11 +151,31 @@ func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window 
 func (e *Tier2Evaluator) evalFailing(ctx context.Context, name string, window time.Duration, threshold int) {
 	count, err := e.loki.CountErrors(ctx, name, window)
 	if err != nil {
-		logger.Error("tier2: count errors (failing)", "container", name, "err", err)
+		logger.Warn("tier2: count errors (failing)", "container", name, "err", err)
 		return
 	}
-	if count >= threshold {
-		return // still failing
+
+	// Use PBR to decide whether the container should still be FAILING.
+	syntheticEvent := ingest.LogEvent{Level: "error"}
+	evalCtx := pbr.EvalContext{
+		Log: &pbr.LogEvalContext{
+			Event:         syntheticEvent,
+			CountInWindow: count,
+			Window:        window,
+		},
+	}
+	result := pbr.Evaluate(e.engine.Rules(), evalCtx)
+	// Apply the same rule-authority semantics as evalHasErrors: if a rule
+	// matched, honour it. Only fall back to the legacy count threshold when no
+	// rule matched at all (result.State == "").
+	var stillFailing bool
+	if result.State != "" {
+		stillFailing = result.State == "FAILING"
+	} else {
+		stillFailing = count >= threshold
+	}
+	if stillFailing {
+		return
 	}
 
 	if err := e.engine.SetRecovered(name); err != nil {
@@ -162,3 +206,4 @@ func dominantFingerprint(fps map[string]int) (string, int) {
 	}
 	return best, bestCount
 }
+

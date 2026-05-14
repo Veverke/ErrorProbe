@@ -7,6 +7,7 @@ import (
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/k8s"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 )
 
 // defaultExcludeNamespaces are the system namespaces excluded by default when
@@ -20,13 +21,6 @@ var defaultExcludeNamespaces = []string{
 	"errorprobe",
 }
 
-// recentRestartWindow is how long after the current container instance started
-// that a non-zero RestartCount is considered an active restart event.
-// Once a container has been running stably beyond this window, infraStatus
-// reverts to "running" — avoiding false RESTARTING for pods that restarted
-// once long ago (e.g. during a rolling deploy).
-const recentRestartWindow = 2 * time.Minute
-
 // ListRunningK8s returns ContainerMeta for every running container in every
 // running pod, across all non-system namespaces.
 //
@@ -35,7 +29,10 @@ const recentRestartWindow = 2 * time.Minute
 //
 // Excluded namespaces default to kube-system / kube-public / kube-node-lease;
 // this can be overridden via cfg.K8s.ExcludeNamespaces.
-func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Config) ([]ContainerMeta, error) {
+//
+// rules is the compiled PBR rule set used to derive InfraStatus for each
+// container. Pass nil or an empty slice to fall back to built-in behaviour.
+func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Config, rules []pbr.Rule) ([]ContainerMeta, error) {
 	pods, err := k8sClient.ListPods(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing k8s pods: %w", err)
@@ -64,12 +61,22 @@ func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Confi
 				continue
 			}
 
-			infraStatus := "running"
-			if c.RestartCount > 0 && !c.StartedAt.IsZero() && time.Since(c.StartedAt) < recentRestartWindow {
-				// Only flag as restarting when the current instance is fresh AND has
-				// a non-zero restart count — i.e. it crashed recently. Containers
-				// that restarted long ago (cumulative count) are considered stable.
-				infraStatus = "restarting"
+			// When StartedAt is unknown we cannot safely compute uptime, so we
+			// skip PBR infra evaluation entirely (a zero uptime would falsely
+			// satisfy uptime < 2m, triggering the builtin-k8s-restarting rule).
+			// "running" is used as the conservative default in that case.
+			var infraStatus string
+			if c.StartedAt.IsZero() {
+				infraStatus = "running"
+			} else {
+				infraStatus = inferInfraStatus(rules, pbr.InfraContainer{
+					Name:         c.Name,
+					Namespace:    pod.Namespace,
+					Runtime:      "k8s",
+					RestartCount: c.RestartCount,
+					Uptime:       time.Since(c.StartedAt),
+					Phase:        pod.Phase,
+				})
 			}
 
 			out = append(out, ContainerMeta{
@@ -89,4 +96,29 @@ func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Confi
 		}
 	}
 	return out, nil
+}
+
+// inferInfraStatus evaluates the PBR infra rules against meta to determine the
+// container's infrastructure status string.
+// Returns "restarting" / "running" / or any custom state from a matched rule.
+// Falls back to "running" when no rule matches.
+func inferInfraStatus(rules []pbr.Rule, meta pbr.InfraContainer) string {
+	if len(rules) == 0 {
+		return "running"
+	}
+	result := pbr.Evaluate(rules, pbr.EvalContext{
+		Infra: &meta,
+	})
+	if result.State == "" {
+		return "running"
+	}
+	// Normalise to lowercase for the InfraStatus field convention.
+	switch result.State {
+	case "RESTARTING":
+		return "restarting"
+	case "OK":
+		return "running"
+	default:
+		return result.State
+	}
 }

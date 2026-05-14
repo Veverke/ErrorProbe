@@ -199,3 +199,45 @@ func TestClassifyChanges_CheckExclude_IsSoft(t *testing.T) {
 		t.Error("expected HasSoft true for check.exclude change")
 	}
 }
+
+// T7.4 — Rules-change classification.
+
+func TestClassifyChanges_Rules_IsSoft(t *testing.T) {
+	a := baseCfg()
+	b := baseCfg()
+	b.Rules = []config.RuleConfig{
+		{Name: "custom-rule", Priority: 200, Match: "log", When: map[string]string{"level": "error"}, SetState: "HAS_ERRORS"},
+	}
+	cs := stack.ClassifyChanges(a, b)
+	if !cs.HasSoft {
+		t.Error("expected HasSoft true when rules slice changes")
+	}
+	if cs.HasHard {
+		t.Error("expected HasHard false when only rules change")
+	}
+}
+
+func TestClassifyChanges_Rules_Removed_IsSoft(t *testing.T) {
+	a := baseCfg()
+	a.Rules = []config.RuleConfig{
+		{Name: "existing-rule", Priority: 200, Match: "log", When: map[string]string{"level": "error"}, SetState: "HAS_ERRORS"},
+	}
+	b := baseCfg()
+	// b.Rules is nil — rules removed.
+	cs := stack.ClassifyChanges(a, b)
+	if !cs.HasSoft {
+		t.Error("expected HasSoft true when rules are removed")
+	}
+}
+
+func TestClassifyChanges_ContainerOverrides_IsSoft(t *testing.T) {
+	a := baseCfg()
+	b := baseCfg()
+	b.ContainerOverrides = map[string][]config.RuleConfig{
+		"my-svc": {{Name: "tolerate-restart", Priority: 300, Match: "infra", When: map[string]string{"restart_count": "> 0"}, SetState: "OK"}},
+	}
+	cs := stack.ClassifyChanges(a, b)
+	if !cs.HasSoft {
+		t.Error("expected HasSoft true when container_overrides change")
+	}
+}

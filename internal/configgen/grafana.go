@@ -67,7 +67,16 @@ func GenerateGrafanaDashboards(outputDir string) error {
 		return wrapErr("writing dashboards provider.yaml", err)
 	}
 
-	for _, name := range []string{"errorprobe-overview.json", "errorprobe-detail.json"} {
+	for _, name := range []string{
+		"errorprobe-overview.json",
+		"errorprobe-detail.json",
+		"errorprobe-watch.json",
+		"errorprobe-restarts.json",
+		"errorprobe-trends.json",
+		"errorprobe-noise.json",
+		"errorprobe-silent.json",
+		"errorprobe-namespaces.json",
+	} {
 		data, err := assets.DashboardsFS.ReadFile("dashboards/" + name)
 		if err != nil {
 			return wrapErr("reading embedded dashboard "+name, err)

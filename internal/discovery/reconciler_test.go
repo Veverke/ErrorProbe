@@ -116,7 +116,7 @@ func newReconcilerForTest(t *testing.T, summaries []container.Summary, listErr e
 	statePath := filepath.Join(dir, "state.json")
 	cfg := buildReconcilerCfg(dir)
 	stub := &stubDockerForReconciler{summaries: summaries, listErr: listErr}
-	r := discovery.NewReconciler(cfg, stub, nil, gen, onReload)
+	r := discovery.NewReconciler(cfg, stub, nil, gen, onReload, nil)
 	discovery.SetReconcilerInterval(r, 20*time.Millisecond)
 	discovery.SetReconcilerStatePath(r, statePath)
 	return r, statePath
@@ -205,7 +205,7 @@ func TestReconciler_ErrorOnList_ContinuesLoop(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
 	cfg := buildReconcilerCfg(dir)
-	r := discovery.NewReconciler(cfg, stub, nil, gen, nil)
+	r := discovery.NewReconciler(cfg, stub, nil, gen, nil, nil)
 	discovery.SetReconcilerInterval(r, 20*time.Millisecond)
 	discovery.SetReconcilerStatePath(r, statePath)
 
