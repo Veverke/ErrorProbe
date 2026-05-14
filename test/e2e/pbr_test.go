@@ -78,10 +78,10 @@ func newEngineWithCallback(t *testing.T, rules []pbr.Rule) (*health.Engine, <-ch
 
 // infraCtxE2E builds an EvalContext for the infra plane.
 func infraCtxE2E(name, namespace, runtime string, restartCount int, uptime time.Duration, phase string) pbr.EvalContext {
-	return pbr.EvalContext{Infra: &pbr.InfraEvalContext{Container: pbr.InfraContainer{
+	return pbr.EvalContext{Infra: &pbr.InfraContainer{
 		Name: name, Namespace: namespace, Runtime: runtime,
 		RestartCount: restartCount, Uptime: uptime, Phase: phase,
-	}}}
+	}}
 }
 
 // logCtxE2E builds an EvalContext for the log plane.
@@ -217,7 +217,7 @@ func TestPBR_Priority_HigherUserRuleBeatsBuiltin(t *testing.T) {
 }
 
 // User rule at priority 95 loses to builtin-log-error at 100.
-func TestPBR_Priority_LowerUserRuleLoosesToBuiltin(t *testing.T) {
+func TestPBR_Priority_LowerUserRuleLosesToBuiltin(t *testing.T) {
 	rules := mustLoad(t, []config.RuleConfig{
 		{Name: "my-rule", Priority: 95, Match: "log", When: map[string]string{"level": "error"}, SetState: "FAILING"},
 	}, nil, pbr.BuiltinRules())
@@ -416,7 +416,8 @@ func TestPBR_Regex_InvalidPattern_LoadError(t *testing.T) {
 		{Name: "bad", Priority: 100, Match: "log", When: map[string]string{"message": "~[invalid"}, SetState: "FAILING"},
 	}, nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bad")
+	assert.Contains(t, err.Error(), `rule "bad"`)
+	assert.Contains(t, err.Error(), "invalid regex")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -764,8 +765,10 @@ func TestPBR_HealthKey_K8sWithoutNamespace_BareKey(t *testing.T) {
 	assert.NotContains(t, e.Snapshot().Containers, "/worker")
 }
 
-// Container override keyed on a bare name must not match a k8s namespaced key.
-func TestPBR_HealthKey_OverrideKeyMismatch_NoSuppression(t *testing.T) {
+// Container override keyed on a bare name fires for k8s containers with the
+// same bare name regardless of namespace, because the override injects a
+// container-name condition, not a health-key condition.
+func TestPBR_HealthKey_OverrideMatchesContainerNameAcrossNamespaces(t *testing.T) {
 	// Override is for "api" (bare name), but event carries namespace "prod" → key "prod/api".
 	overrides := map[string][]config.RuleConfig{
 		"api": {{Name: "suppress-api", Priority: 500, Match: "log",

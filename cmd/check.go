@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -317,7 +318,7 @@ func printExplain(snap health.HealthSnapshot) {
 	for k := range snap.Containers {
 		keys = append(keys, k)
 	}
-	sortStrings(keys)
+	sort.Strings(keys)
 	for _, key := range keys {
 		ch := snap.Containers[key]
 		rule := ch.MatchedRule
@@ -325,14 +326,5 @@ func printExplain(snap health.HealthSnapshot) {
 			rule = "no rule matched — default applied"
 		}
 		fmt.Printf("%-40s  %-15s  rule: %s\n", healthKeyDisplay(key), string(ch.State), rule)
-	}
-}
-
-// sortStrings sorts a string slice in-place (stdlib sort to avoid extra import).
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
 	}
 }

@@ -3,6 +3,7 @@ package pbr
 import (
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -92,27 +93,27 @@ func logFieldValue(field string, ctx *LogEvalContext) (string, bool) {
 	case "runtime":
 		return ctx.Event.Runtime, true
 	case "count_in_window":
-		return formatInt(ctx.CountInWindow), true
+		return strconv.Itoa(ctx.CountInWindow), true
 	case "window":
 		return ctx.Window.String(), true
 	}
 	return "", false
 }
 
-func infraFieldValue(field string, ctx *InfraEvalContext) (string, bool) {
+func infraFieldValue(field string, ctx *InfraContainer) (string, bool) {
 	switch field {
 	case "container":
-		return ctx.Container.Name, true
+		return ctx.Name, true
 	case "namespace":
-		return ctx.Container.Namespace, true
+		return ctx.Namespace, true
 	case "runtime":
-		return ctx.Container.Runtime, true
+		return ctx.Runtime, true
 	case "restart_count":
-		return formatInt(ctx.Container.RestartCount), true
+		return strconv.Itoa(ctx.RestartCount), true
 	case "uptime":
-		return ctx.Container.Uptime.String(), true
+		return ctx.Uptime.String(), true
 	case "phase":
-		return ctx.Container.Phase, true
+		return ctx.Phase, true
 	}
 	return "", false
 }
@@ -129,8 +130,8 @@ func numericOrDuration(val, field string) (float64, bool) {
 		return d.Seconds(), true
 	}
 	// Integer fields (count_in_window, restart_count)
-	var n int
-	if _, err := parseIntStr(val, &n); err != nil {
+	n, err := strconv.Atoi(val)
+	if err != nil {
 		return 0, false
 	}
 	return float64(n), true
@@ -141,65 +142,7 @@ func isDurationField(field string) bool {
 	return field == "uptime" || field == "window"
 }
 
-// formatInt renders an int as its decimal string.
-func formatInt(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	buf := make([]byte, 0, 20)
-	for n > 0 {
-		buf = append(buf, byte('0'+n%10))
-		n /= 10
-	}
-	// reverse
-	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
-		buf[i], buf[j] = buf[j], buf[i]
-	}
-	if neg {
-		return "-" + string(buf)
-	}
-	return string(buf)
-}
-
-// parseIntStr parses a decimal integer string into *out. Returns the number of
-// bytes consumed and any error.
-func parseIntStr(s string, out *int) (int, error) {
-	neg := false
-	i := 0
-	if i < len(s) && s[i] == '-' {
-		neg = true
-		i++
-	}
-	if i >= len(s) {
-		return 0, errInvalidInt
-	}
-	n := 0
-	for ; i < len(s); i++ {
-		c := s[i]
-		if c < '0' || c > '9' {
-			return 0, errInvalidInt
-		}
-		n = n*10 + int(c-'0')
-	}
-	if neg {
-		n = -n
-	}
-	*out = n
-	return i, nil
-}
-
 // compileRegex compiles pattern as a regex.
 func compileRegex(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(pattern)
 }
-
-// errInvalidInt is a sentinel for parseIntStr.
-var errInvalidInt = &parseError{"invalid integer"}
-
-type parseError struct{ msg string }
-
-func (e *parseError) Error() string { return e.msg }

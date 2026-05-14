@@ -106,12 +106,16 @@ func stringSlicesEqual(a, b []string) bool {
 }
 
 // ruleConfigSlicesEqual reports whether two RuleConfig slices have identical
-// contents using deep equality (order-sensitive).
+// contents using deep equality. The comparison is order-sensitive: reordering
+// rules in YAML without any other change will be reported as a soft change and
+// trigger a hot-reload. This is acceptable — the reload is cheap and the rule
+// evaluation order (determined by priority, not slice position) is unchanged.
 func ruleConfigSlicesEqual(a, b []config.RuleConfig) bool {
 	return reflect.DeepEqual(a, b)
 }
 
 // containerOverridesEqual reports whether two container-overrides maps are equal.
+// Like ruleConfigSlicesEqual the per-container rule slices are compared in order.
 func containerOverridesEqual(a, b map[string][]config.RuleConfig) bool {
 	return reflect.DeepEqual(a, b)
 }

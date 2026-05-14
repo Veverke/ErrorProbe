@@ -101,12 +101,15 @@ func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window 
 			Window:        window,
 		},
 	}
-	result := pbr.Evaluate(e.engine.rules, evalCtx)
+	result := pbr.Evaluate(e.engine.Rules(), evalCtx)
 	if result.State != "FAILING" {
-		// PBR did not escalate; also check legacy threshold as fallback when count
-		// meets the configured minimum (preserves existing behaviour for installs
-		// that have not written any rules).
-		if count < threshold {
+		// PBR evaluated but did not escalate to FAILING — respect the result.
+		// Only apply the legacy count-threshold fallback when PBR matched no
+		// rule at all (empty State), which preserves existing behaviour for
+		// installs that have not configured any rules.  When a user rule did
+		// match (result.State != ""), the rule is authoritative and the legacy
+		// fallback is skipped so it cannot silently override the user's intent.
+		if result.State != "" || count < threshold {
 			return
 		}
 	}
@@ -161,8 +164,16 @@ func (e *Tier2Evaluator) evalFailing(ctx context.Context, name string, window ti
 			Window:        window,
 		},
 	}
-	result := pbr.Evaluate(e.engine.rules, evalCtx)
-	stillFailing := result.State == "FAILING" || count >= threshold
+	result := pbr.Evaluate(e.engine.Rules(), evalCtx)
+	// Apply the same rule-authority semantics as evalHasErrors: if a rule
+	// matched, honour it. Only fall back to the legacy count threshold when no
+	// rule matched at all (result.State == "").
+	var stillFailing bool
+	if result.State != "" {
+		stillFailing = result.State == "FAILING"
+	} else {
+		stillFailing = count >= threshold
+	}
 	if stillFailing {
 		return
 	}

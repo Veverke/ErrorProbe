@@ -24,7 +24,8 @@ type Engine struct {
 // NewEngine creates an Engine that persists state to snapshotPath and calls
 // onChange (if non-nil) whenever the snapshot changes.
 // rules is the compiled PBR rule set returned by pbr.Load; pass nil to use
-// built-in rules only (BuiltinRules are loaded automatically in that case).
+// the built-in rule set automatically (BuiltinRules are loaded as the default).
+// Note: nil has different semantics in SetRules — see SetRules for details.
 // On startup it loads any existing snapshot from disk so state survives
 // ErrorProbe restarts.
 func NewEngine(snapshotPath string, rules []pbr.Rule, onChange func(HealthSnapshot)) *Engine {
@@ -49,11 +50,24 @@ func NewEngine(snapshotPath string, rules []pbr.Rule, onChange func(HealthSnapsh
 }
 
 // SetRules atomically replaces the engine's compiled rule set.
+// Pass nil or an empty slice to clear all rules so that no events produce
+// health state changes until new rules are loaded.
+// Note: unlike NewEngine, nil here does NOT fall back to built-in rules — it
+// clears the rule set entirely. Callers that want built-ins must pass
+// pbr.BuiltinRules() or the result of pbr.Load.
 // Safe to call concurrently with ProcessBatch.
 func (e *Engine) SetRules(rules []pbr.Rule) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.rules = rules
+}
+
+// Rules returns a snapshot of the current compiled rule set.
+// Safe to call concurrently with SetRules and ProcessBatch.
+func (e *Engine) Rules() []pbr.Rule {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.rules
 }
 
 // ProcessBatch applies a batch of log events to the snapshot.

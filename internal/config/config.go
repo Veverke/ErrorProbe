@@ -13,14 +13,14 @@ import (
 
 // Config holds the full errorprobe.yaml configuration.
 type Config struct {
-	Version           int                       `mapstructure:"version"`
-	Stack             Stack                     `mapstructure:"stack"`
-	Detection         Detection                 `mapstructure:"detection"`
-	Containers        Containers                `mapstructure:"containers"`
-	K8s               K8sConfig                 `mapstructure:"k8s"`
-	Check             Check                     `mapstructure:"check"`
-	HistoryRetention  string                    `mapstructure:"history_retention"`
-	Rules             []RuleConfig              `mapstructure:"rules"`
+	Version            int                      `mapstructure:"version"`
+	Stack              Stack                    `mapstructure:"stack"`
+	Detection          Detection                `mapstructure:"detection"`
+	Containers         Containers               `mapstructure:"containers"`
+	K8s                K8sConfig                `mapstructure:"k8s"`
+	Check              Check                    `mapstructure:"check"`
+	HistoryRetention   string                   `mapstructure:"history_retention"`
+	Rules              []RuleConfig             `mapstructure:"rules"`
 	ContainerOverrides map[string][]RuleConfig  `mapstructure:"container_overrides"`
 }
 

@@ -61,19 +61,23 @@ func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Confi
 				continue
 			}
 
-			uptime := time.Duration(0)
-			if !c.StartedAt.IsZero() {
-				uptime = time.Since(c.StartedAt)
+			// When StartedAt is unknown we cannot safely compute uptime, so we
+			// skip PBR infra evaluation entirely (a zero uptime would falsely
+			// satisfy uptime < 2m, triggering the builtin-k8s-restarting rule).
+			// "running" is used as the conservative default in that case.
+			var infraStatus string
+			if c.StartedAt.IsZero() {
+				infraStatus = "running"
+			} else {
+				infraStatus = inferInfraStatus(rules, pbr.InfraContainer{
+					Name:         c.Name,
+					Namespace:    pod.Namespace,
+					Runtime:      "k8s",
+					RestartCount: c.RestartCount,
+					Uptime:       time.Since(c.StartedAt),
+					Phase:        pod.Phase,
+				})
 			}
-
-			infraStatus := inferInfraStatus(rules, pbr.InfraContainer{
-				Name:         c.Name,
-				Namespace:    pod.Namespace,
-				Runtime:      "k8s",
-				RestartCount: c.RestartCount,
-				Uptime:       uptime,
-				Phase:        pod.Phase,
-			})
 
 			out = append(out, ContainerMeta{
 				// ID is synthetic: namespace/pod/container — unique within cluster.
@@ -103,7 +107,7 @@ func inferInfraStatus(rules []pbr.Rule, meta pbr.InfraContainer) string {
 		return "running"
 	}
 	result := pbr.Evaluate(rules, pbr.EvalContext{
-		Infra: &pbr.InfraEvalContext{Container: meta},
+		Infra: &meta,
 	})
 	if result.State == "" {
 		return "running"

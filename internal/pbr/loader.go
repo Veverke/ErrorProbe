@@ -13,23 +13,23 @@ import (
 
 // validLogFields is the set of field names allowed in log-plane conditions.
 var validLogFields = map[string]bool{
-	"level":          true,
-	"message":        true,
-	"container":      true,
-	"namespace":      true,
-	"runtime":        true,
+	"level":           true,
+	"message":         true,
+	"container":       true,
+	"namespace":       true,
+	"runtime":         true,
 	"count_in_window": true,
-	"window":         true,
+	"window":          true,
 }
 
 // validInfraFields is the set of field names allowed in infra-plane conditions.
 var validInfraFields = map[string]bool{
-	"container":    true,
-	"namespace":    true,
-	"runtime":      true,
+	"container":     true,
+	"namespace":     true,
+	"runtime":       true,
 	"restart_count": true,
-	"uptime":       true,
-	"phase":        true,
+	"uptime":        true,
+	"phase":         true,
 }
 
 // validStates is the set of recognised output states.
@@ -101,7 +101,10 @@ func Load(ruleCfgs []config.RuleConfig, containerOverrides map[string][]config.R
 	}
 
 	// Sort descending by priority (highest first).
-	sort.Slice(rules, func(i, j int) bool {
+	// SliceStable preserves the relative insertion order of rules with equal
+	// priorities: user rules are appended before builtins, so a user rule that
+	// shares a priority with a builtin will always evaluate first.
+	sort.SliceStable(rules, func(i, j int) bool {
 		return rules[i].Priority > rules[j].Priority
 	})
 
@@ -116,6 +119,9 @@ func parseRule(rc config.RuleConfig) (Rule, error) {
 	match := MatchContext(strings.TrimSpace(rc.Match))
 	if match != MatchLog && match != MatchInfra {
 		return Rule{}, fmt.Errorf("rule %q: unknown match context %q (must be \"log\" or \"infra\")", rc.Name, rc.Match)
+	}
+	if rc.SetState == "" {
+		return Rule{}, fmt.Errorf("rule %q: set_state is required", rc.Name)
 	}
 	if !validStates[rc.SetState] {
 		return Rule{}, fmt.Errorf("rule %q: unknown set_state %q", rc.Name, rc.SetState)
@@ -194,10 +200,17 @@ func parseCondition(ruleName, field, rawValue string) (Condition, error) {
 		if _, err := filepath.Match(rawValue, ""); err != nil {
 			return Condition{}, fmt.Errorf("rule %q field %q: invalid glob pattern %q: %w", ruleName, field, rawValue, err)
 		}
+		// Normalise the pattern case for fields whose values are lower-cased at
+		// evaluation time (fieldValue calls strings.ToLower on level and runtime).
+		// Without this, patterns like "ERR*" on level: would never match "error".
+		patternValue := rawValue
+		if field == "level" || field == "runtime" {
+			patternValue = strings.ToLower(rawValue)
+		}
 		return Condition{
 			Field:    field,
 			Operator: OpGlob,
-			Value:    rawValue,
+			Value:    patternValue,
 		}, nil
 	}
 

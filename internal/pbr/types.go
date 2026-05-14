@@ -34,11 +34,11 @@ const (
 // Condition is a single field comparison within a rule's when block.
 // Regex patterns are compiled once at load time and stored in CompiledRegex.
 type Condition struct {
-	Field        string
-	Operator     Operator
-	Value        string        // raw string value for eq / gt / lt / gte / lte / glob
-	NumericValue float64       // parsed numeric value for numeric operators
-	DurValue     time.Duration // parsed duration value for duration fields
+	Field         string
+	Operator      Operator
+	Value         string         // raw string value for eq / gt / lt / gte / lte / glob
+	NumericValue  float64        // parsed numeric value for numeric operators
+	DurValue      time.Duration  // parsed duration value for duration fields
 	CompiledRegex *regexp.Regexp
 }
 
@@ -58,11 +58,6 @@ type LogEvalContext struct {
 	Window        time.Duration
 }
 
-// InfraEvalContext carries the inputs available on the infra evaluation plane.
-type InfraEvalContext struct {
-	Container     InfraContainer
-}
-
 // InfraContainer holds the infra-plane fields exposed to rule conditions.
 // It is a thin projection of discovery.ContainerMeta to keep the pbr package
 // free of a direct import of the discovery package.
@@ -76,10 +71,10 @@ type InfraContainer struct {
 }
 
 // EvalContext is the union type that wraps either a LogEvalContext or an
-// InfraEvalContext. Callers pass a pointer; only one field will be non-nil.
+// InfraContainer. Callers pass a pointer; only one field will be non-nil.
 type EvalContext struct {
 	Log   *LogEvalContext
-	Infra *InfraEvalContext
+	Infra *InfraContainer
 }
 
 // EvalResult is the output of one evaluation pass.

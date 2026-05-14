@@ -1,5 +1,13 @@
 package pbr
 
+import "time"
+
+// recentRestartWindow is the uptime threshold below which a K8s container with
+// a non-zero restart count is considered to be actively restarting.  A container
+// that has been running longer than this window is assumed to be stable even if
+// it has restarted in the past.
+const recentRestartWindow = 2 * time.Minute
+
 // BuiltinRules returns the default rule set shipped with ErrorProbe.
 // These rules are assigned the lowest standard priorities so any user rule
 // with priority > 110 overrides all of them.
@@ -48,8 +56,7 @@ func BuiltinRules() []Rule {
 			Conditions: []Condition{
 				{Field: "runtime", Operator: OpEq, Value: "k8s"},
 				{Field: "restart_count", Operator: OpGt, NumericValue: 0},
-				// 2 minutes in seconds
-				{Field: "uptime", Operator: OpLt, NumericValue: 2 * 60},
+				{Field: "uptime", Operator: OpLt, NumericValue: recentRestartWindow.Seconds()},
 			},
 			SetState: "RESTARTING",
 		},
