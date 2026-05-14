@@ -16,6 +16,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/docker"
 	"github.com/errorprobe/errorprobe/internal/pbr"
+	"github.com/errorprobe/errorprobe/internal/pid"
 	"github.com/errorprobe/errorprobe/internal/stack"
 )
 
@@ -90,7 +91,6 @@ only the affected containers.`,
 			fmt.Printf("Soft changes applied (no restart required): %s\n",
 				strings.Join(cs.SoftChanges, "; "))
 		}
-
 		// Apply hard changes: stop → remove → regenerate config → start.
 		if cs.HasHard {
 			fmt.Printf("Hard changes require container recreation: %s\n",
@@ -127,6 +127,13 @@ only the affected containers.`,
 
 			fmt.Printf("Hard changes applied (containers recreated): %s\n",
 				strings.Join(cs.HardChanges, "; "))
+		}
+
+		// Notify the running ep process to hot-reload its PBR rules (T7.3).
+		// Errors are non-fatal — ep may not be running (e.g. in CI), or the
+		// platform may not support it (Windows).
+		if err := pid.SendHUP(current.StateDir() + "ep.pid"); err != nil {
+			fmt.Printf("warning: could not signal ep for rule reload: %v\n", err)
 		}
 
 		return saveConfig(current)

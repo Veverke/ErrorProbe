@@ -1,6 +1,9 @@
 package health
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // FunctionalState represents the derived health state for a container.
 type FunctionalState string
@@ -32,6 +35,18 @@ type HealthSnapshot struct {
 	SnapshotAt time.Time                  `json:"snapshot_at"`
 }
 
+// hasErrorKeyword reports whether s contains a word that marks it as an error
+// header (exception class, fatal message, panic) rather than a stack-frame or
+// continuation line.  Used by SetError to avoid overwriting an informative error
+// header with a less-informative follow-on line such as "   at …".
+func hasErrorKeyword(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "exception") ||
+		strings.Contains(lower, "error") ||
+		strings.Contains(lower, "fatal") ||
+		strings.Contains(lower, "panic")
+}
+
 // SetError upserts the container entry, flipping state to HAS_ERRORS and incrementing count.
 // FirstErrorAt is only set on the first error; LastErrorAt is always updated.
 // StateFailing is preserved — it can only be cleared by Tier2 recovery logic (Reset or an
@@ -46,7 +61,13 @@ func (s *HealthSnapshot) SetError(name, msg string, at time.Time) {
 		ch.State = StateHasErrors
 	}
 	ch.ErrorCount++
-	ch.LastErrorMsg = msg
+	// Only overwrite LastErrorMsg when the incoming message is at least as
+	// informative as the one already stored.  This prevents stack-frame lines
+	// (e.g. "   at Microsoft.Win32.SafeHandles…") from replacing the exception
+	// header that names the actual error.
+	if ch.LastErrorMsg == "" || !hasErrorKeyword(ch.LastErrorMsg) || hasErrorKeyword(msg) {
+		ch.LastErrorMsg = msg
+	}
 	ch.LastUpdated = at
 	if ch.FirstErrorAt == nil {
 		t := at

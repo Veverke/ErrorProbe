@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/ingest"
+	"github.com/errorprobe/errorprobe/internal/pbr"
 )
 
 var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -112,4 +114,70 @@ func TestEngine_Reset_ClearsAndPersists(t *testing.T) {
 	loaded, err := LoadSnapshot(path)
 	require.NoError(t, err)
 	assert.Equal(t, StateOK, loaded.Containers["api"].State)
+}
+
+// T7.4 — SetRules hot-reload tests.
+
+// TestEngine_SetRules_NewRulesApplied verifies that after SetRules, subsequent
+// events are classified using the new rule set, not the original one.
+func TestEngine_SetRules_NewRulesApplied(t *testing.T) {
+	dir := t.TempDir()
+
+	// Start with a rule that treats "warn" as OK (overrides the builtin).
+	suppressWarn, err := pbr.Load([]config.RuleConfig{
+		{Name: "suppress-warn", Priority: 200, Match: "log", When: map[string]string{"level": "warn"}, SetState: "OK"},
+	}, nil, pbr.BuiltinRules())
+	require.NoError(t, err)
+
+	e := NewEngine(filepath.Join(dir, "health.json"), suppressWarn, nil)
+
+	// Warn event → OK under the initial rule set.
+	e.ProcessBatch([]ingest.LogEvent{warnEvent("svc", "slow query")})
+	snap := e.Snapshot()
+	if state := snap.Containers["svc"].State; state != StateOK && state != "" {
+		t.Fatalf("expected OK or no entry before rule swap, got %q", state)
+	}
+
+	// Swap to built-in rules only (warn → HAS_ERRORS).
+	newRules, err := pbr.Load(nil, nil, pbr.BuiltinRules())
+	require.NoError(t, err)
+	e.SetRules(newRules)
+
+	// Reset state so the next event is the trigger.
+	require.NoError(t, e.Reset("svc"))
+
+	// Same warn event → HAS_ERRORS under the new rule set.
+	e.ProcessBatch([]ingest.LogEvent{warnEvent("svc", "slow query")})
+	assert.Equal(t, StateHasErrors, e.Snapshot().Containers["svc"].State)
+}
+
+// TestEngine_SetRules_InvalidRules_OldRulesRetained verifies the caller-side
+// pattern: pbr.Load returns an error for invalid rules (duplicate priority),
+// and SetRules is NOT called, so the engine retains its old rule set.
+func TestEngine_SetRules_InvalidRules_OldRulesRetained(t *testing.T) {
+	dir := t.TempDir()
+
+	// Initial rules: suppress warn.
+	suppressWarn, err := pbr.Load([]config.RuleConfig{
+		{Name: "suppress-warn", Priority: 200, Match: "log", When: map[string]string{"level": "warn"}, SetState: "OK"},
+	}, nil, pbr.BuiltinRules())
+	require.NoError(t, err)
+
+	e := NewEngine(filepath.Join(dir, "health.json"), suppressWarn, nil)
+
+	// Attempt to load rules with duplicate priorities — this must fail.
+	dupCfgs := []config.RuleConfig{
+		{Name: "rule-a", Priority: 200, Match: "log", When: map[string]string{"level": "error"}, SetState: "HAS_ERRORS"},
+		{Name: "rule-b", Priority: 200, Match: "log", When: map[string]string{"level": "warn"}, SetState: "HAS_ERRORS"},
+	}
+	_, loadErr := pbr.Load(dupCfgs, nil, pbr.BuiltinRules())
+	require.Error(t, loadErr, "expected duplicate priority to be rejected")
+
+	// Since Load failed, SetRules is never called — old rules still apply.
+	require.NoError(t, e.Reset("svc"))
+	e.ProcessBatch([]ingest.LogEvent{warnEvent("svc", "slow query")})
+	snap := e.Snapshot()
+	if state := snap.Containers["svc"].State; state != StateOK && state != "" {
+		t.Fatalf("old suppress-warn rule should still apply, got %q", state)
+	}
 }

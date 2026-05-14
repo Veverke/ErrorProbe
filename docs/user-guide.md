@@ -65,6 +65,7 @@
 
 <a name="cmd-check"></a>
 **`check`**
+- `--explain` — print which PBR rule last set the state for each container
 - `--json` — output result as JSON
 
 <a name="cmd-reload"></a>
@@ -343,7 +344,7 @@ Re-reads `errorprobe.yaml`, classifies every changed field, and applies the mini
 
 | Change type | Examples | Action |
 |---|---|---|
-| **Soft** | `detection.severity_patterns`, `containers.exclude`, `check.*` | Regenerate Vector config + send SIGHUP to Vector — no container restart |
+| **Soft** | `detection.severity_patterns`, `containers.exclude`, `check.*`, `rules`, `container_overrides` | Regenerate Vector config + send SIGHUP to Vector — no container restart; also signals the running `ep up` process to hot-reload PBR rules |
 | **Hard** | Any `stack.*.image`, any port, `ingest.bind`, `ingest.transport` | Stop, remove, and recreate only the affected containers |
 
 If nothing changed: prints `No configuration changes detected` and exits 0.
@@ -420,6 +421,10 @@ k8s:
   exclude_namespaces: [kube-system, kube-public, kube-node-lease]
 
 history_retention: 30d   # how long state-transition records are kept in history.jsonl
+
+# Policy-Based Rules — see "Policy-Based Rules" section below
+rules: []
+container_overrides: {}
 ```
 
 ### Excluding containers
@@ -495,6 +500,188 @@ containers:
 ```
 
 > **Note:** display names are cosmetic only. All internal tracking (health keys, Loki labels, Grafana Explore links) still uses the original container name.
+
+---
+
+## Policy-Based Rules
+
+ErrorProbe's health engine is driven by **Policy-Based Rules (PBR)** — an ordered list of rules, each describing _when_ a rule fires and _what state_ to assign when it does.
+
+Rules are evaluated in **descending priority order**. The first rule whose conditions all match wins — subsequent rules are not evaluated for that event (first-match-wins).
+
+### Built-in rules
+
+ErrorProbe ships four built-in rules that are active by default:
+
+| Name | Priority | Plane | Conditions | Sets state |
+|---|---|---|---|---|
+| `builtin-failing` | 110 | log | `level=error` AND `count_in_window >= 5` | `FAILING` |
+| `builtin-log-error` | 100 | log | `level=error` | `HAS_ERRORS` |
+| `builtin-log-warn` | 90 | log | `level=warn` | `HAS_ERRORS` |
+| `builtin-k8s-restarting` | 100 | infra | `runtime=k8s` AND `restart_count > 0` AND `uptime < 2m` | `RESTARTING` |
+
+Any user rule with priority > 110 overrides all built-ins. A user rule with the same `name` as a built-in **replaces it entirely**.
+
+### Rule structure
+
+Rules are declared under the top-level `rules` key in `errorprobe.yaml`:
+
+```yaml
+rules:
+  - name: noisy-background-job
+    priority: 200
+    match: log
+    when:
+      container: "eq:background-job"
+      level: "eq:error"
+    set_state: OK
+
+  - name: payments-failing-threshold
+    priority: 150
+    match: log
+    when:
+      container: "eq:payments-api"
+      count_in_window: "gte:3"
+    set_state: FAILING
+```
+
+Each rule has five fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Unique identifier. A user rule with the same name as a built-in replaces that built-in entirely. |
+| `priority` | yes | Integer (> 0). Rules evaluated in descending order; higher number wins. |
+| `match` | yes | Evaluation plane: `log` (log event) or `infra` (container metadata). |
+| `when` | yes | Map of `field: "operator:value"` conditions. All conditions must be true (AND semantics). |
+| `set_state` | yes | State to assign: `OK`, `HAS_ERRORS`, `FAILING`, `RESTARTING`, or `DEGRADED`. |
+
+### Available fields
+
+**Log plane (`match: log`):**
+
+| Field | Type | Description |
+|---|---|---|
+| `level` | string | Normalised log level: `error`, `warn`, `info`, `debug` |
+| `message` | string | Raw log line text |
+| `container` | string | Container name |
+| `namespace` | string | Kubernetes namespace (empty for Docker) |
+| `runtime` | string | `docker` or `k8s` |
+| `count_in_window` | numeric | Rolling error count in the Tier 2 window |
+| `window` | duration | The Tier 2 window duration |
+
+**Infra plane (`match: infra`):**
+
+| Field | Type | Description |
+|---|---|---|
+| `container` | string | Container name |
+| `namespace` | string | Kubernetes namespace |
+| `runtime` | string | `docker` or `k8s` |
+| `restart_count` | numeric | Number of container restarts |
+| `uptime` | duration | Time since container last started |
+| `phase` | string | Kubernetes pod phase (`Running`, `Pending`, etc.) |
+
+### Operators
+
+Conditions use the format `"operator:value"`. Omitting the operator defaults to `eq`:
+
+| Operator | Applies to | Example |
+|---|---|---|
+| `eq` | string / numeric / duration | `level: "eq:error"` or `level: "error"` |
+| `gt` | numeric / duration | `restart_count: "gt:3"` |
+| `gte` | numeric / duration | `count_in_window: "gte:5"` |
+| `lt` | numeric / duration | `uptime: "lt:2m"` |
+| `lte` | numeric / duration | `restart_count: "lte:0"` |
+| `regex` | string | `message: "regex:(?i)connection refused"` |
+| `glob` | string | `container: "glob:payments-*"` |
+
+Duration values accept Go duration syntax: `30s`, `2m`, `1h30m`.
+
+Regex patterns are compiled once at startup. An invalid pattern causes `errorprobe up` and `errorprobe reload` to abort with a clear error before any changes are applied.
+
+### Suppressing noisy containers
+
+Assign `set_state: OK` at a higher priority than the error built-ins to prevent a container's events from being recorded:
+
+```yaml
+rules:
+  - name: suppress-migration-errors
+    priority: 200
+    match: log
+    when:
+      container: "eq:db-migrate"
+      level: "eq:error"
+    set_state: OK
+```
+
+A container whose most recent matched rule produces `OK` produces no health snapshot entry — it never appears as failing in `errorprobe check` or `errorprobe watch`.
+
+### Replacing a built-in by name
+
+Give a user rule exactly the same `name` as a built-in to replace it. For example, to raise the FAILING threshold from 5 to 20 errors:
+
+```yaml
+rules:
+  - name: builtin-failing
+    priority: 110
+    match: log
+    when:
+      level: "eq:error"
+      count_in_window: "gte:20"
+    set_state: FAILING
+```
+
+### Per-container overrides
+
+`container_overrides` applies rules to a specific container without writing a `container: "eq:..."` condition on every rule. The container scope is injected automatically:
+
+```yaml
+container_overrides:
+  payments-api:
+    - name: payments-warn-is-error
+      priority: 200
+      match: log
+      when:
+        level: "eq:warn"
+      set_state: HAS_ERRORS   # treat warn as error for payments-api only
+
+  background-worker:
+    - name: worker-silent
+      priority: 200
+      match: log
+      when:
+        level: "eq:error"
+      set_state: OK           # suppress all errors from background-worker
+```
+
+Priority uniqueness is validated across all user rules and container overrides combined.
+
+### Live rule hot-reload
+
+Rule changes are **soft changes** — no containers are restarted. After editing `errorprobe.yaml`, run:
+
+```
+errorprobe reload
+```
+
+ErrorProbe validates the new rules first, then signals the running `errorprobe up` process. The process re-reads the config and swaps the active rule set on both the health engine and the reconciler without interrupting log collection or the ingest endpoint.
+
+> **Windows:** SIGHUP is unavailable on Windows. Rule changes take effect on the next `errorprobe up` restart.
+
+### Debugging rule decisions
+
+```
+errorprobe check --explain
+```
+
+Prints which PBR rule last set the health state for each tracked container:
+
+```
+payments-api                              HAS_ERRORS       rule: builtin-log-error
+background-worker                         OK               rule: suppress-migration-errors
+user-service                              OK               rule: no rule matched — default applied
+```
+
+This reads the `MatchedRule` field from the persisted health snapshot. `no rule matched — default applied` means the container had no matching rule and received the default OK state.
 
 ---
 

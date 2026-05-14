@@ -160,10 +160,39 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		GeneratedAt: time.Now(),
 	}
 
+	// Detect infra-status changes on containers whose ID is unchanged but whose
+	// InfraStatus flipped (e.g. "restarting" → "running").  Diff only tracks
+	// structural adds/removes by ID, so without this check a container that
+	// stabilises after a restart loop would stay marked "restarting" in the saved
+	// watch set forever — the TUI reads the file every second and would never see
+	// the updated state.
+	//
+	// We only care about transitions *away from* a degraded state; ignoring the
+	// empty→"running" case avoids spurious reloads when the watch set was seeded
+	// without an InfraStatus (e.g. on first discovery or in tests).
+	isDegraded := func(s string) bool {
+		switch s {
+		case "restarting", "failed", "error", "crashed", "terminating", "pending", "waiting":
+			return true
+		}
+		return false
+	}
+	prevByID := make(map[string]ContainerMeta, len(previous.Containers))
+	for _, c := range previous.Containers {
+		prevByID[c.ID] = c
+	}
+	infraStatusChanged := false
+	for _, c := range approved {
+		if prev, ok := prevByID[c.ID]; ok && isDegraded(prev.InfraStatus) && c.InfraStatus != prev.InfraStatus {
+			infraStatusChanged = true
+			break
+		}
+	}
+
 	// 5. Diff — skip if nothing changed.
 	added, removed := current.Diff(previous)
 	structureChanged := len(added) > 0 || len(removed) > 0
-	if !structureChanged && !restartDiagChanged {
+	if !structureChanged && !restartDiagChanged && !infraStatusChanged {
 		return nil
 	}
 	for _, c := range added {
@@ -242,6 +271,14 @@ func prevExitLine(logs string) string {
 		}
 		return s
 	}
+	// isKubeletNoise returns true for container-runtime log-management messages
+	// emitted by containerd/runc when cleaning up the pod log directory after exit
+	// (e.g. "failed to try resolving symlinks in path /var/log/pods/…").
+	// These are never written by the application and always contain both "symlink"
+	// and the kubelet-specific path prefix "/var/log/pods/".
+	isKubeletNoise := func(lower string) bool {
+		return strings.Contains(lower, "symlink") && strings.Contains(lower, "/var/log/pods/")
+	}
 	// Prefer lines that contain an error keyword.
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -249,16 +286,22 @@ func prevExitLine(logs string) string {
 			continue
 		}
 		lower := strings.ToLower(line)
+		if isKubeletNoise(lower) {
+			continue
+		}
 		if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") ||
 			strings.Contains(lower, "panic") || strings.Contains(lower, "exception") ||
 			strings.Contains(lower, "failed") {
 			return truncate(line)
 		}
 	}
-	// Fallback: last non-empty line.
+	// Fallback: last non-empty line that is not kubelet noise.
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line != "" {
+		if line == "" {
+			continue
+		}
+		if !isKubeletNoise(strings.ToLower(line)) {
 			return truncate(line)
 		}
 	}

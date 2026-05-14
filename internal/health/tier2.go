@@ -88,7 +88,7 @@ func (e *Tier2Evaluator) evaluate(ctx context.Context) {
 func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window time.Duration, threshold int) {
 	count, err := e.loki.CountErrors(ctx, name, window)
 	if err != nil {
-		logger.Error("tier2: count errors", "container", name, "err", err)
+		logger.Warn("tier2: count errors", "container", name, "err", err)
 		return
 	}
 
@@ -115,7 +115,7 @@ func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window 
 	// window-scoped fingerprint counts.
 	msgs, err := e.loki.QueryErrorMessages(ctx, name, window)
 	if err != nil {
-		logger.Error("tier2: query error messages", "container", name, "err", err)
+		logger.Warn("tier2: query error messages", "container", name, "err", err)
 		return
 	}
 	fpCounts := make(map[string]int, len(msgs))
@@ -148,7 +148,7 @@ func (e *Tier2Evaluator) evalHasErrors(ctx context.Context, name string, window 
 func (e *Tier2Evaluator) evalFailing(ctx context.Context, name string, window time.Duration, threshold int) {
 	count, err := e.loki.CountErrors(ctx, name, window)
 	if err != nil {
-		logger.Error("tier2: count errors (failing)", "container", name, "err", err)
+		logger.Warn("tier2: count errors (failing)", "container", name, "err", err)
 		return
 	}
 

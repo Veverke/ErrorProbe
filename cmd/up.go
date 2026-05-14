@@ -155,7 +155,32 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		// skip regeneration if the container set hasn't changed since last run.
 		_ = os.Remove(cfg.StateDir() + "containers.json")
 
-		return reconciler.Run(ctx)
+		// Run the reconciler in a goroutine so we can also handle SIGHUP for
+		// live PBR rule reloads (T7.3).
+		hupc := listenReloadSignal()
+		recErrCh := make(chan error, 1)
+		go func() { recErrCh <- reconciler.Run(ctx) }()
+
+		for {
+			select {
+			case err := <-recErrCh:
+				return err
+			case <-hupc:
+				newCfg, cfgErr := config.Load(cfgFile)
+				if cfgErr != nil {
+					logger.Error("rule hot-reload: failed to load config", "err", cfgErr)
+					continue
+				}
+				newRules, rulesErr := pbr.Load(newCfg.Rules, newCfg.ContainerOverrides, pbr.BuiltinRules())
+				if rulesErr != nil {
+					logger.Error("rule hot-reload: invalid rules — keeping old rules", "err", rulesErr)
+					continue
+				}
+				engine.SetRules(newRules)
+				reconciler.SetRules(newRules)
+				logger.Info("PBR rules hot-reloaded")
+			}
+		}
 	},
 }
 
