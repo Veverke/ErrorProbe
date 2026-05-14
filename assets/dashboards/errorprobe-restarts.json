@@ -1,0 +1,236 @@
+{
+  "id": null,
+  "uid": "errorprobe-restarts",
+  "title": "ErrorProbe — Error Bursts",
+  "description": "Detects sudden error-rate spikes — the primary log-observable proxy for crash-loops and restart storms. Compares the current 5-minute window against the prior 5-minute window to surface emerging incidents.",
+  "tags": ["errorprobe"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["15s", "30s", "1m", "5m"],
+    "time_options": ["30m", "1h", "3h", "6h"]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Containers with Errors (last 5 m)",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "count(sum by (container) (count_over_time({container=~\".+\", level=\"error\"} [5m]) > 0))",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Errors — last 5 m",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["sum"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({container=~\".+\", level=\"error\"} [5m]))",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Errors — 5–10 m ago (baseline)",
+      "description": "Compare with 'Errors last 5m' to confirm a rising spike. If right > left, errors are receding.",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["sum"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({container=~\".+\", level=\"error\"} [5m] offset 5m))",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Error Rate per Container",
+      "description": "Sudden spikes from a flat baseline indicate crash-loop or restart-storm conditions. A container that restarts will often show a burst → silence → burst pattern.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 4 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["max", "sum"]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate({container=~\".+\", level=\"error\"} [2m])",
+          "legendFormat": "{{container}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Top Containers by Error Count — last 5 m",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "sortBy": [{ "displayName": "Errors", "desc": true }],
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "displayMode": "auto" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "displayName", "value": "Errors" }] },
+          { "matcher": { "id": "byName", "options": "Time" }, "properties": [{ "id": "custom.hidden", "value": true }] },
+          { "matcher": { "id": "byName", "options": "container" }, "properties": [{ "id": "displayName", "value": "Container" }] }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (container) (count_over_time({container=~\".+\", level=\"error\"} [5m]))",
+          "instant": true,
+          "legendFormat": "{{container}}",
+          "refId": "A"
+        }
+      ],
+      "transformations": [{ "id": "merge", "options": {} }]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Same — 5–10 min ago (baseline)",
+      "description": "Containers absent here but present in the left table have newly developed errors.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "sortBy": [{ "displayName": "Errors", "desc": true }],
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "displayMode": "auto" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "displayName", "value": "Errors" }] },
+          { "matcher": { "id": "byName", "options": "Time" }, "properties": [{ "id": "custom.hidden", "value": true }] },
+          { "matcher": { "id": "byName", "options": "container" }, "properties": [{ "id": "displayName", "value": "Container" }] }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (container) (count_over_time({container=~\".+\", level=\"error\"} [5m] offset 5m))",
+          "instant": true,
+          "legendFormat": "{{container}}",
+          "refId": "A"
+        }
+      ],
+      "transformations": [{ "id": "merge", "options": {} }]
+    },
+    {
+      "id": 7,
+      "type": "logs",
+      "title": "Recent Error Stream",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "expr": "{container=~\".+\", level=\"error\"}",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

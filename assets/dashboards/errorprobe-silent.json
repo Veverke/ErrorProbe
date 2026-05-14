@@ -1,0 +1,121 @@
+{
+  "id": null,
+  "uid": "errorprobe-silent",
+  "title": "ErrorProbe — Silent Containers",
+  "description": "Surfaces containers that have stopped or sharply slowed their logging — a signal for hung, dead or severely throttled workloads that produce no errors yet are not healthy.",
+  "tags": ["errorprobe"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-10m", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m"],
+    "time_options": ["5m", "10m", "30m", "1h"]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "### How to read this dashboard\n- **Left table** — log lines received in the **last 2 minutes** (current activity), sorted least-active first.\n- **Right table** — log lines received **2–10 minutes ago** (recent baseline).\n- A container present in the right table but **absent from the left** has gone quiet — check `ep watch` or `ep status` for its infra state.\n- Containers with **zero logs in the entire 10-minute window** do not appear in either table. Use `ep status` to confirm they are still running.\n- The time-series at the bottom makes flatlines (dead containers) visually obvious."
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Log Lines — Last 2 min (least active first)",
+      "description": "Containers at the top are the quietest right now.",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 3 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "sortBy": [{ "displayName": "Lines", "desc": false }],
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "displayMode": "auto" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "displayName", "value": "Lines" }] },
+          { "matcher": { "id": "byName", "options": "Time" }, "properties": [{ "id": "custom.hidden", "value": true }] },
+          { "matcher": { "id": "byName", "options": "container" }, "properties": [{ "id": "displayName", "value": "Container" }, { "id": "custom.width", "value": 220 }] }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (container) (count_over_time({container=~\".+\"} [2m]))",
+          "instant": true,
+          "legendFormat": "{{container}}",
+          "refId": "A"
+        }
+      ],
+      "transformations": [{ "id": "merge", "options": {} }]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Log Lines — 2–10 min ago (baseline)",
+      "description": "Containers present here but absent from the left table may have gone silent since then.",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 3 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "sortBy": [{ "displayName": "Lines", "desc": false }],
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "displayMode": "auto" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "displayName", "value": "Lines" }] },
+          { "matcher": { "id": "byName", "options": "Time" }, "properties": [{ "id": "custom.hidden", "value": true }] },
+          { "matcher": { "id": "byName", "options": "container" }, "properties": [{ "id": "displayName", "value": "Container" }, { "id": "custom.width", "value": 220 }] }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (container) (count_over_time({container=~\".+\"} [8m] offset 2m))",
+          "instant": true,
+          "legendFormat": "{{container}}",
+          "refId": "A"
+        }
+      ],
+      "transformations": [{ "id": "merge", "options": {} }]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Log Rate per Container — 10-minute view",
+      "description": "Lines dropping to zero and staying there are dead containers. A brief dip followed by recovery is a restart.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 13 },
+      "datasource": { "type": "loki", "uid": "errorprobe-loki" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["last", "min", "mean"]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate({container=~\".+\"} [1m])",
+          "legendFormat": "{{container}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

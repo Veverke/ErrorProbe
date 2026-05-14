@@ -35,6 +35,13 @@ schema_config:
 
 limits_config:
   retention_period: {{.Retention}}
+  unordered_writes: true
+  ingestion_rate_mb: 32
+  ingestion_burst_size_mb: 64
+
+ingester:
+  max_chunk_age: 15m
+  chunk_idle_period: 5m
 
 compactor:
   retention_enabled: true

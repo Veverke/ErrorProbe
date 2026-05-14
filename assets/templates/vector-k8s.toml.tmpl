@@ -43,7 +43,8 @@ source = '''
 [sinks.loki]
 type = "loki"
 inputs = ["normalize"]
-endpoint = "http://${HOST_IP}:{{.LokiPort}}"
+endpoint = "http://host.docker.internal:{{.LokiPort}}"
+out_of_order_action = "accept"
 
 [sinks.loki.labels]
 container = "{{ "{{" }} .container {{ "}}" }}"
