@@ -105,13 +105,29 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			// No rule matched — no state change for this event.
 			continue
 		}
-		if state == "HAS_ERRORS" || state == "FAILING" {
+		if state == "HAS_WARNINGS" {
 			key := logEventKey(ev)
 			prevCount := 0
 			if ch, ok := e.snapshot.Containers[key]; ok {
 				prevCount = ch.ErrorCount
 			}
-			e.snapshot.SetError(key, ev.Message, ev.Timestamp)
+			e.snapshot.SetWarn(key, extractNotableLines(ev.Message), ev.Timestamp)
+			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
+				changed = true
+			}
+			if ch, ok := e.snapshot.Containers[key]; ok {
+				if result.MatchedRule != "" {
+					ch.MatchedRule = result.MatchedRule
+				}
+				e.snapshot.Containers[key] = ch
+			}
+		} else if state == "HAS_ERRORS" || state == "FAILING" {
+			key := logEventKey(ev)
+			prevCount := 0
+			if ch, ok := e.snapshot.Containers[key]; ok {
+				prevCount = ch.ErrorCount
+			}
+			e.snapshot.SetError(key, extractNotableLines(ev.Message), ev.Timestamp)
 			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
 				changed = true
 			}
@@ -323,4 +339,40 @@ func (e *Engine) SetRecovered(name string) error {
 		e.onChange(snap)
 	}
 	return nil
+}
+
+// extractNotableLines filters a (potentially multi-line) log message down to
+// only the lines that contain a warn or error keyword.
+// When a message is a single line, or no line contains a keyword, the original
+// message is returned unchanged so callers always get something useful.
+//
+// This addresses the case where Vector delivers a multi-line "block" (e.g. the
+// entire initdb initialisation output).  Rather than storing the whole block or
+// only the triggering line, we store the lines that carry the signal.
+func extractNotableLines(msg string) string {
+	lines := strings.Split(msg, "\n")
+	if len(lines) <= 1 {
+		return msg
+	}
+	var notable []string
+	for _, l := range lines {
+		if hasNotableKeyword(l) {
+			notable = append(notable, strings.TrimSpace(l))
+		}
+	}
+	if len(notable) == 0 {
+		return msg
+	}
+	return strings.Join(notable, " | ")
+}
+
+// hasNotableKeyword reports whether a log line contains a word that marks it
+// as an error or warning line (as opposed to a stack-frame or continuation line).
+func hasNotableKeyword(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "error") ||
+		strings.Contains(lower, "warn") ||
+		strings.Contains(lower, "fatal") ||
+		strings.Contains(lower, "panic") ||
+		strings.Contains(lower, "exception")
 }

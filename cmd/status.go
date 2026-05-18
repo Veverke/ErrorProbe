@@ -98,7 +98,7 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 			}
 			errors := "0"
 			lastErr := "—"
-			if ch.State == health.StateHasErrors || ch.State == health.StateFailing {
+			if ch.State == health.StateHasErrors || ch.State == health.StateHasWarnings || ch.State == health.StateFailing {
 				errors = fmt.Sprintf("%d", ch.ErrorCount)
 				if ch.LastErrorAt != nil {
 					lastErr = ch.LastErrorAt.Format("15:04") + " " + truncate(ch.LastErrorMsg, 30)
@@ -130,6 +130,8 @@ container watched by ErrorProbe, along with the last seen error timestamp.`,
 
 func formatFunctionalState(ch health.ContainerHealth) string {
 	switch ch.State {
+	case health.StateHasWarnings:
+		return fmt.Sprintf("! HAS WARNINGS %d", ch.ErrorCount)
 	case health.StateHasErrors:
 		return fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount)
 	case health.StateFailing:

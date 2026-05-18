@@ -46,7 +46,7 @@ func BuiltinRules() []Rule {
 			Conditions: []Condition{
 				{Field: "level", Operator: OpEq, Value: "warn"},
 			},
-			SetState: "HAS_ERRORS",
+			SetState: "HAS_WARNINGS",
 		},
 		{
 			// Infra plane: K8s container restarting within the recent-restart window.

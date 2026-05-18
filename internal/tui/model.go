@@ -71,6 +71,7 @@ type Model struct {
 var (
 	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	okStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	warnStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))  // dark yellow for warnings
 	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	inferredStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // cyan for learned rules
@@ -333,7 +334,7 @@ func (m Model) View() string {
 	for _, ch := range m.snap.Containers {
 		if ch.State == health.StateFailing {
 			isFailing = true
-		} else if ch.State == health.StateHasErrors {
+		} else if ch.State == health.StateHasErrors || ch.State == health.StateHasWarnings {
 			hasErrors = true
 		}
 	}
@@ -485,6 +486,14 @@ func (m Model) View() string {
 		var funcStyled string
 		var lastErr string
 		switch ch.State {
+		case health.StateHasWarnings:
+			funcText = fmt.Sprintf("! HAS WARNINGS %d", ch.ErrorCount)
+			funcStyled = warnStyle.Render(funcText)
+			if ch.LastErrorAt != nil {
+				lastErr = ch.LastErrorAt.Format("15:04") + " " + humanMsg(ch.LastErrorMsg)
+			} else {
+				lastErr = "—"
+			}
 		case health.StateHasErrors:
 			funcText = fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount)
 			funcStyled = errStyle.Render(funcText)
@@ -558,6 +567,8 @@ func (m Model) View() string {
 			c1 = selectedBg.Render(c1)
 			var selFuncSty lipgloss.Style
 			switch ch.State {
+			case health.StateHasWarnings:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Background(lipgloss.Color(selBg))
 			case health.StateHasErrors:
 				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(lipgloss.Color(selBg))
 			case health.StateFailing:
@@ -685,6 +696,15 @@ func (m Model) buildExpandedLines(
 	// --- Line 1: error summary (h-scrollable) ---
 	var summary string
 	switch ch.State {
+	case health.StateHasWarnings:
+		if ch.LastErrorMsg != "" {
+			summary = fmt.Sprintf("!  last warning (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+		} else {
+			summary = fmt.Sprintf("!  has warnings (%d total, no message)", ch.ErrorCount)
+		}
+		if prevExit != "" {
+			summary += "  │  prev exit: " + prevExit
+		}
 	case health.StateHasErrors:
 		if ch.LastErrorMsg != "" {
 			summary = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)

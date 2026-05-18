@@ -125,12 +125,14 @@ type Containers struct {
 // with ErrorProbe.  They strip the noisy random suffixes that Kubernetes appends
 // to container names.  Used whenever Containers.DisplayNamePatterns is empty.
 var DefaultDisplayNamePatterns = []string{
-	// K8s StatefulSet / Job / Deployment instance suffix: strip the trailing 5-char random suffix.
-	// e.g.  selling-counter-couchdb-vx8fw  →  selling-counter-couchdb
-	// e.g.  payments-api-7d9f6b8c4-vx8fw  →  payments-api-7d9f6b8c4
-	// (For Deployment names the ReplicaSet hash remains; it is stable across restarts
-	//  and far less noisy than the ever-changing instance suffix.)
-	`^(.*)-[a-z0-9]{5}$`,
+	// K8s instance suffix: strip any trailing hyphenated segment that contains at
+	// least one digit (i.e. looks like a random hash or ordinal number).
+	// e.g.  selling-counter-couchdb-vx8fw  →  selling-counter-couchdb  (suffix has digit 8)
+	// e.g.  payments-api-7d9f6b8c4-vx8fw  →  payments-api-7d9f6b8c4  (suffix has digit 8)
+	// e.g.  postgres-0                     →  postgres                 (ordinal)
+	// All-letter suffixes like "-pgsql", "-redis", "-mysql" are intentional parts of
+	// the name and are NOT stripped.
+	`^(.*)-[a-z0-9]*[0-9][a-z0-9]*$`,
 }
 
 // K8sConfig holds Kubernetes discovery settings.
@@ -250,8 +252,8 @@ func Load(projectDir string) (*Config, error) {
 		return nil, fmt.Errorf("unsupported version %d: only version 1 is supported", cfg.Version)
 	}
 
-	if cfg.Check.FailOn != "" && cfg.Check.FailOn != "HAS_ERRORS" && cfg.Check.FailOn != "FAILING" {
-		return nil, fmt.Errorf("invalid check.fail_on %q: must be HAS_ERRORS or FAILING", cfg.Check.FailOn)
+	if cfg.Check.FailOn != "" && cfg.Check.FailOn != "HAS_WARNINGS" && cfg.Check.FailOn != "HAS_ERRORS" && cfg.Check.FailOn != "FAILING" {
+		return nil, fmt.Errorf("invalid check.fail_on %q: must be HAS_WARNINGS, HAS_ERRORS, or FAILING", cfg.Check.FailOn)
 	}
 
 	// Store the config directory so path helpers can compute overlay file defaults.

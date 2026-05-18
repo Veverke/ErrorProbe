@@ -525,7 +525,7 @@ func TestBuiltinRules_LogWarn_FiresOnWarn(t *testing.T) {
 	require.NoError(t, err)
 
 	result := Evaluate(rules, logCtx("warn", "deprecated api"))
-	assert.Equal(t, "HAS_ERRORS", result.State)
+	assert.Equal(t, "HAS_WARNINGS", result.State)
 	assert.Equal(t, "builtin-log-warn", result.MatchedRule)
 }
 

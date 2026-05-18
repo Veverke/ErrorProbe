@@ -56,7 +56,7 @@ func TestEngine_ProcessBatch_WarnEvent_FlipsState(t *testing.T) {
 	e.ProcessBatch([]ingest.LogEvent{warnEvent("api", "slow query")})
 
 	snap := e.Snapshot()
-	assert.Equal(t, StateHasErrors, snap.Containers["api"].State)
+	assert.Equal(t, StateHasWarnings, snap.Containers["api"].State)
 }
 
 func TestEngine_ProcessBatch_MultipleContainers(t *testing.T) {
@@ -146,9 +146,9 @@ func TestEngine_SetRules_NewRulesApplied(t *testing.T) {
 	// Reset state so the next event is the trigger.
 	require.NoError(t, e.Reset("svc"))
 
-	// Same warn event → HAS_ERRORS under the new rule set.
+	// Same warn event → HAS_WARNINGS under the new rule set.
 	e.ProcessBatch([]ingest.LogEvent{warnEvent("svc", "slow query")})
-	assert.Equal(t, StateHasErrors, e.Snapshot().Containers["svc"].State)
+	assert.Equal(t, StateHasWarnings, e.Snapshot().Containers["svc"].State)
 }
 
 // TestEngine_SetRules_InvalidRules_OldRulesRetained verifies the caller-side

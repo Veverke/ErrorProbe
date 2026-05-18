@@ -9,9 +9,10 @@ import (
 type FunctionalState string
 
 const (
-	StateOK        FunctionalState = "OK"
-	StateHasErrors FunctionalState = "HAS_ERRORS"
-	StateFailing   FunctionalState = "FAILING" // reserved for Phase 6
+	StateOK          FunctionalState = "OK"
+	StateHasWarnings FunctionalState = "HAS_WARNINGS"
+	StateHasErrors   FunctionalState = "HAS_ERRORS"
+	StateFailing     FunctionalState = "FAILING"
 )
 
 // StateTransitionEvent is emitted by the Engine (and by the discovery
@@ -87,6 +88,34 @@ func (s *HealthSnapshot) SetError(name, msg string, at time.Time) {
 	// (e.g. "   at Microsoft.Win32.SafeHandles…") from replacing the exception
 	// header that names the actual error.
 	if ch.LastErrorMsg == "" || !hasErrorKeyword(ch.LastErrorMsg) || hasErrorKeyword(msg) {
+		ch.LastErrorMsg = msg
+	}
+	ch.LastUpdated = at
+	if ch.FirstErrorAt == nil {
+		t := at
+		ch.FirstErrorAt = &t
+	}
+	t := at
+	ch.LastErrorAt = &t
+	s.Containers[name] = ch
+}
+
+// SetWarn upserts the container entry, flipping state to HAS_WARNINGS unless the container
+// is already at HAS_ERRORS or FAILING (warnings never downgrade a more severe state).
+// It increments ErrorCount (which counts all notable events) and updates LastErrorMsg.
+func (s *HealthSnapshot) SetWarn(name, msg string, at time.Time) {
+	if s.Containers == nil {
+		s.Containers = make(map[string]ContainerHealth)
+	}
+	ch := s.Containers[name]
+	ch.Name = name
+	// Only move to HAS_WARNINGS if the container is currently OK.
+	// HAS_ERRORS and FAILING take precedence over warnings.
+	if ch.State == StateOK || ch.State == "" {
+		ch.State = StateHasWarnings
+	}
+	ch.ErrorCount++
+	if ch.LastErrorMsg == "" || !hasErrorKeyword(ch.LastErrorMsg) {
 		ch.LastErrorMsg = msg
 	}
 	ch.LastUpdated = at
