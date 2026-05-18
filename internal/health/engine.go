@@ -127,7 +127,11 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			if ch, ok := e.snapshot.Containers[key]; ok {
 				prevCount = ch.ErrorCount
 			}
-			e.snapshot.SetError(key, extractNotableLines(ev.Message), ev.Timestamp)
+			// Pass the raw message to SetError so that multi-line stack traces,
+			// "Caused by:" chains, and Python/Java traceback frames are preserved
+			// verbatim. extractNotableLines is only applied for HAS_WARNINGS, where
+			// filtering noisy continuation lines is desirable.
+			e.snapshot.SetError(key, ev.Message, ev.Timestamp)
 			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
 				changed = true
 			}

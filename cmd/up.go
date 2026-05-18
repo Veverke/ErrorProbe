@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -86,7 +87,10 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		// Load and validate PBR rules. Merge in any overlay (learned) rules first.
 		// On error, report and abort so the user fixes the config before the stack starts.
-		overlayRules, _ := learn.LoadOverlay(cfg.LearnOverlayFile())
+		overlayRules, overlayErr := learn.LoadOverlay(cfg.LearnOverlayFile())
+		if overlayErr != nil && !errors.Is(overlayErr, os.ErrNotExist) {
+			logger.Warn("could not load learned overlay; starting without learned rules", "err", overlayErr)
+		}
 		mergedRuleCfgs := learn.MergeOverlay(cfg.Rules, overlayRules)
 		compiledRules, rulesErr := pbr.Load(mergedRuleCfgs, cfg.ContainerOverrides, pbr.BuiltinRules())
 		if rulesErr != nil {
@@ -164,7 +168,10 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 				logger.Error("learn: reload config failed", "err", cfgErr)
 				return
 			}
-			newOverlay, _ := learn.LoadOverlay(newCfg.LearnOverlayFile())
+			newOverlay, newOverlayErr := learn.LoadOverlay(newCfg.LearnOverlayFile())
+			if newOverlayErr != nil && !errors.Is(newOverlayErr, os.ErrNotExist) {
+				logger.Warn("learn: could not load overlay during reload; reloading without learned rules", "err", newOverlayErr)
+			}
 			newMerged := learn.MergeOverlay(newCfg.Rules, newOverlay)
 			newRules, rulesErr := pbr.Load(newMerged, newCfg.ContainerOverrides, pbr.BuiltinRules())
 			if rulesErr != nil {
@@ -217,7 +224,10 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 					logger.Error("rule hot-reload: failed to load config", "err", cfgErr)
 					continue
 				}
-				newOverlay, _ := learn.LoadOverlay(newCfg.LearnOverlayFile())
+				newOverlay, newOverlayErr := learn.LoadOverlay(newCfg.LearnOverlayFile())
+				if newOverlayErr != nil && !errors.Is(newOverlayErr, os.ErrNotExist) {
+					logger.Warn("rule hot-reload: could not load overlay; reloading without learned rules", "err", newOverlayErr)
+				}
 				newMerged := learn.MergeOverlay(newCfg.Rules, newOverlay)
 				newRules, rulesErr := pbr.Load(newMerged, newCfg.ContainerOverrides, pbr.BuiltinRules())
 				if rulesErr != nil {

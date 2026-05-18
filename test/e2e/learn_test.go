@@ -106,9 +106,9 @@ func TestLearn_HappyPath_GeneratesOverlay(t *testing.T) {
 		At:        time.Now(),
 	}
 
-	// Give the learner time to process.
-	time.Sleep(500 * time.Millisecond)
-	cancel()
+	// Close the channel so the learner processes the buffered event and exits
+	// deterministically, without relying on a wall-clock sleep.
+	close(transitions)
 	<-done
 
 	// Overlay should have at least one rule.
@@ -149,7 +149,11 @@ func TestLearn_Blocklisted_NoRule(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go learner.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		learner.Run(ctx)
+		close(done)
+	}()
 
 	transitions <- health.StateTransitionEvent{
 		Container: "svc",
@@ -158,8 +162,8 @@ func TestLearn_Blocklisted_NoRule(t *testing.T) {
 		At:        time.Now(),
 	}
 
-	time.Sleep(300 * time.Millisecond)
-	cancel()
+	close(transitions)
+	<-done
 
 	loaded, err := learn.LoadOverlay(overlayPath)
 	require.NoError(t, err)
@@ -200,7 +204,11 @@ func TestLearn_Suppressed_NotRelearned(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go learner.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		learner.Run(ctx)
+		close(done)
+	}()
 
 	transitions <- health.StateTransitionEvent{
 		Container: "myapp",
@@ -209,8 +217,8 @@ func TestLearn_Suppressed_NotRelearned(t *testing.T) {
 		At:        time.Now(),
 	}
 
-	time.Sleep(300 * time.Millisecond)
-	cancel()
+	close(transitions)
+	<-done
 
 	loaded, _ := learn.LoadOverlay(overlayPath)
 	assert.Empty(t, loaded, "suppressed pattern must not generate a new rule")
@@ -239,14 +247,18 @@ func TestLearn_GenericPattern_Discarded(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go learner.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		learner.Run(ctx)
+		close(done)
+	}()
 
 	transitions <- health.StateTransitionEvent{
 		Container: "net-svc", PrevState: health.StateOK, NewState: health.StateHasErrors, At: time.Now(),
 	}
 
-	time.Sleep(300 * time.Millisecond)
-	cancel()
+	close(transitions)
+	<-done
 
 	loaded, _ := learn.LoadOverlay(overlayPath)
 	assert.Empty(t, loaded, "generic pattern must be discarded")

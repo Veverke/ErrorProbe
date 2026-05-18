@@ -69,7 +69,8 @@ func NewLearner(
 
 // Run starts the learner event loop. It blocks until ctx is cancelled.
 func (l *Learner) Run(ctx context.Context) {
-	bgTicker := l.backgroundTicker()
+	bgTicker, stopTicker := l.backgroundTicker()
+	defer stopTicker()
 
 	for {
 		select {
@@ -91,16 +92,26 @@ func (l *Learner) Run(ctx context.Context) {
 }
 
 // backgroundTicker returns a channel that fires at the configured background
-// scan interval. Returns a never-firing channel when background scan is disabled.
-func (l *Learner) backgroundTicker() <-chan time.Time {
-	if !l.cfg.BackgroundScan || l.cfg.BackgroundScanInterval == "" {
-		return make(chan time.Time) // never fires
+// scan interval, and a stop function that must be called when the ticker is no
+// longer needed. Returns a never-firing channel (and a no-op stop) when
+// background scan is disabled or the interval is invalid.
+func (l *Learner) backgroundTicker() (<-chan time.Time, func()) {
+	noop := func() {}
+	if !l.cfg.BackgroundScan {
+		return make(chan time.Time), noop
+	}
+	if l.cfg.BackgroundScanInterval == "" {
+		logger.Warn("learner: BackgroundScan enabled but BackgroundScanInterval is empty — background scan disabled")
+		return make(chan time.Time), noop
 	}
 	d, err := config.ParseDuration(l.cfg.BackgroundScanInterval)
 	if err != nil || d <= 0 {
-		return make(chan time.Time)
+		logger.Warn("learner: BackgroundScan enabled but BackgroundScanInterval is invalid or zero — background scan disabled",
+			"interval", l.cfg.BackgroundScanInterval)
+		return make(chan time.Time), noop
 	}
-	return time.NewTicker(d).C
+	t := time.NewTicker(d)
+	return t.C, t.Stop
 }
 
 // handleTransition dispatches a StateTransitionEvent to the appropriate scan

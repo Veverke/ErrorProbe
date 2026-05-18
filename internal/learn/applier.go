@@ -1,9 +1,13 @@
 package learn
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
+
+	"github.com/errorprobe/errorprobe/internal/logger"
 )
 
 // Applier manages the lifecycle of learned rules: writing them to the overlay
@@ -112,7 +116,9 @@ func (a *Applier) ConfirmRule(name string) error {
 
 	// Remove from pending.
 	newPending := removeRule(pending, name)
-	_ = SavePending(a.pendingPath, newPending)
+	if err := SavePending(a.pendingPath, newPending); err != nil {
+		logger.Warn("applier: could not save pending after confirm", "err", err)
+	}
 
 	// Upsert into overlay.
 	overlay, _ := LoadOverlay(a.overlayPath)
@@ -131,35 +137,55 @@ func (a *Applier) ConfirmRule(name string) error {
 
 // RejectRule removes rule name from the overlay and pending files, and adds
 // pattern to the suppression list so it is never re-learned.
+// Returns a non-nil error if any on-disk write fails so the caller can detect
+// an inconsistent state (e.g. rule still active, suppression not recorded).
 func (a *Applier) RejectRule(name, pattern string) error {
 	a.mu.Lock()
 
+	var errs []error
+
 	// Remove from overlay.
-	overlay, _ := LoadOverlay(a.overlayPath)
-	overlay = removeRule(overlay, name)
-	_ = SaveOverlay(a.overlayPath, overlay)
+	overlay, loadErr := LoadOverlay(a.overlayPath)
+	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+		errs = append(errs, fmt.Errorf("reject: loading overlay: %w", loadErr))
+	} else {
+		overlay = removeRule(overlay, name)
+		if err := SaveOverlay(a.overlayPath, overlay); err != nil {
+			errs = append(errs, fmt.Errorf("reject: saving overlay: %w", err))
+		}
+	}
 
 	// Remove from pending.
-	pending, _ := LoadPending(a.pendingPath)
-	pending = removeRule(pending, name)
-	_ = SavePending(a.pendingPath, pending)
+	pending, loadErr := LoadPending(a.pendingPath)
+	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+		errs = append(errs, fmt.Errorf("reject: loading pending: %w", loadErr))
+	} else {
+		pending = removeRule(pending, name)
+		if err := SavePending(a.pendingPath, pending); err != nil {
+			errs = append(errs, fmt.Errorf("reject: saving pending: %w", err))
+		}
+	}
 
 	// Add to suppression.
-	sl, _ := LoadSuppressionList(a.suppressionPath)
-	if !sl.Contains(pattern) {
+	sl, loadErr := LoadSuppressionList(a.suppressionPath)
+	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+		errs = append(errs, fmt.Errorf("reject: loading suppression list: %w", loadErr))
+	} else if !sl.Contains(pattern) {
 		sl.Add(SuppressionEntry{
 			Pattern: pattern,
 			AddedAt: time.Now().UTC(),
 			Reason:  "operator rejected",
 		})
-		_ = sl.Save()
+		if err := sl.Save(); err != nil {
+			errs = append(errs, fmt.Errorf("reject: saving suppression list: %w", err))
+		}
 	}
 	a.mu.Unlock()
 
 	if a.onReload != nil {
 		a.onReload()
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // OverlayRules returns the current contents of the overlay file.
