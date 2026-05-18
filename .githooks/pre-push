@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# .githooks/pre-push
+# Runs unit tests, non-Docker e2e tests, and coverage gate before every push.
+# Install once per clone with:  make setup-hooks
+set -euo pipefail
+
+echo ""
+echo "╔═══════════════════════════════════════════════╗"
+echo "║          ErrorProbe pre-push checks            ║"
+echo "╚═══════════════════════════════════════════════╝"
+
+COVERAGE_OUT="${TMPDIR:-/tmp}/ep-coverage-$$.out"
+THRESHOLD=90
+
+# ---------------------------------------------------------------------------
+# 1. Unit tests + coverage (no Docker / live infra required)
+# ---------------------------------------------------------------------------
+echo ""
+echo "▶  Unit tests (./internal/... ./cmd/...)"
+go test \
+  -coverprofile="$COVERAGE_OUT" \
+  -covermode=atomic \
+  -count=1 \
+  ./internal/... ./cmd/...
+
+# ---------------------------------------------------------------------------
+# 2. In-process e2e tests (no Docker daemon required)
+# ---------------------------------------------------------------------------
+echo ""
+echo "▶  E2e pipeline and PBR tests (./test/e2e/...)"
+go test \
+  -tags integration \
+  -run "TestIngest|TestPBR|TestHealth|TestStatus|TestTier2|TestCmdList|TestCmdReload|TestCmdStatus|TestLearn|TestBinary" \
+  -count=1 \
+  ./test/e2e/...
+
+# ---------------------------------------------------------------------------
+# 3. Coverage threshold
+# ---------------------------------------------------------------------------
+echo ""
+echo "▶  Coverage gate (threshold: ${THRESHOLD}%)"
+go run ./scripts/check_coverage.go "$COVERAGE_OUT" "$THRESHOLD"
+
+rm -f "$COVERAGE_OUT"
+echo ""
+echo "✔  All pre-push checks passed."
+echo ""

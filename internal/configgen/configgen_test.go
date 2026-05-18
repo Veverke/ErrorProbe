@@ -481,4 +481,103 @@ func TestGenerateVector_BothSourcesPresent(t *testing.T) {
 	assert.NoError(t, err, "combined docker+k8s config must be valid TOML")
 }
 
+// ---------------------------------------------------------------------------
+// DefaultGenerator — satisfies discovery.VectorGenerator interface
+// ---------------------------------------------------------------------------
+
+func TestDefaultGenerator_GenerateVector_DelegatesToPackageFunc(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfig(3100, "72h", 3000)
+	gen := configgen.DefaultGenerator{}
+
+	err := gen.GenerateVector(cfg, dir, []string{"my-container"}, nil)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "my-container")
+}
+
+func TestDefaultGenerator_GenerateVector_K8sRefs(t *testing.T) {
+	dir := t.TempDir()
+	cfg := buildConfig(3100, "72h", 3000)
+	gen := configgen.DefaultGenerator{}
+
+	k8sRefs := []discovery.K8sContainerRef{{PodName: "mypod", Namespace: "prod"}}
+	err := gen.GenerateVector(cfg, dir, nil, k8sRefs)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(dir, "vector.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "kubernetes_logs")
+}
+
+// ---------------------------------------------------------------------------
+// GenerateGrafanaDashboards
+// ---------------------------------------------------------------------------
+
+func TestGenerateGrafanaDashboards_CreatesProviderYAML(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, configgen.GenerateGrafanaDashboards(dir))
+
+	providerPath := filepath.Join(dir, "grafana", "provisioning", "dashboards", "provider.yaml")
+	data, err := os.ReadFile(providerPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "apiVersion: 1")
+	assert.Contains(t, string(data), "ErrorProbe")
+}
+
+func TestGenerateGrafanaDashboards_CreatesDashboardJSONFiles(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, configgen.GenerateGrafanaDashboards(dir))
+
+	dashDir := filepath.Join(dir, "grafana", "provisioning", "dashboards")
+	entries, err := os.ReadDir(dashDir)
+	require.NoError(t, err)
+
+	var jsonFiles int
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".json" {
+			jsonFiles++
+		}
+	}
+	assert.Greater(t, jsonFiles, 0, "at least one dashboard JSON should be copied")
+}
+
+func TestGenerateGrafanaDashboards_IsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, configgen.GenerateGrafanaDashboards(dir))
+	// Second call must not error (overwrite is OK).
+	require.NoError(t, configgen.GenerateGrafanaDashboards(dir))
+}
+
+// ---------------------------------------------------------------------------
+// VectorK8sConfig
+// ---------------------------------------------------------------------------
+
+func TestVectorK8sConfig_ReturnsNonEmptyString(t *testing.T) {
+	cfg := buildConfig(3100, "72h", 3000)
+	out, err := configgen.VectorK8sConfig(cfg)
+	require.NoError(t, err)
+	assert.NotEmpty(t, out)
+}
+
+func TestVectorK8sConfig_ContainsLokiPort(t *testing.T) {
+	cfg := buildConfig(4567, "72h", 3000)
+	out, err := configgen.VectorK8sConfig(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, out, "4567")
+}
+
+func TestVectorK8sConfig_ContainsIngestPort(t *testing.T) {
+	cfg := &config.Config{
+		Stack: config.Stack{
+			Loki:   config.LokiConfig{Port: 3100},
+			Ingest: config.IngestConfig{Port: 9999},
+		},
+	}
+	out, err := configgen.VectorK8sConfig(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, out, "9999")
+}
 

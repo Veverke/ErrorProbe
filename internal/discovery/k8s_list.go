@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/errorprobe/errorprobe/internal/config"
@@ -79,9 +80,22 @@ func ListRunningK8s(ctx context.Context, k8sClient k8s.K8sAPI, cfg *config.Confi
 				})
 			}
 
+			var containerID string
+			if raw := c.ContainerID; raw != "" {
+				// Strip the runtime scheme prefix (e.g. "containerd://", "docker://").
+				if idx := strings.Index(raw, "://"); idx >= 0 {
+					containerID = raw[idx+3:]
+				} else {
+					containerID = raw
+				}
+			}
+			if containerID == "" {
+				// Fallback synthetic ID — unique within cluster but not a real hash.
+				containerID = pod.Namespace + "/" + pod.Name + "/" + c.Name
+			}
+
 			out = append(out, ContainerMeta{
-				// ID is synthetic: namespace/pod/container — unique within cluster.
-				ID:           pod.Namespace + "/" + pod.Name + "/" + c.Name,
+				ID:           containerID,
 				Name:         c.Name,
 				Image:        c.Image,
 				Labels:       pod.Labels,

@@ -655,3 +655,36 @@ func TestParseCondition_GlobOperator_CharClass(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, OpGlob, c.Operator)
 }
+
+func TestEvalCondition_DurationEq_ParseError_ReturnsFalse(t *testing.T) {
+	// "uptime" is a duration field; passing a non-duration value makes both parses fail.
+	c := Condition{Field: "uptime", Operator: OpEq, Value: "not-a-duration"}
+	ctx := infraCtx("svc", "", "docker", 0, 5*time.Minute, "running")
+	result := EvalCondition(c, ctx)
+	assert.False(t, result)
+}
+
+func TestEvalCondition_GlobInvalidPattern_ReturnsFalse(t *testing.T) {
+	// filepath.Match returns an error on an invalid glob pattern.
+	c := Condition{Field: "container", Operator: OpGlob, Value: "[invalid"}
+	result := EvalCondition(c, logCtx("error", "msg"))
+	assert.False(t, result)
+}
+
+func TestContextMatchesPlane_UnknownPlane_ReturnsFalse(t *testing.T) {
+	// Pass an unknown MatchContext value — hits the default return false branch.
+	result := contextMatchesPlane(MatchContext("unknown"), logCtx("error", "msg"))
+	assert.False(t, result)
+}
+
+func TestNumericOrDuration_DurationParseError_ReturnsFalse(t *testing.T) {
+	// "uptime" is a duration field; an unparseable value hits the error branch.
+	_, ok := numericOrDuration("not-a-duration", "uptime")
+	assert.False(t, ok)
+}
+
+func TestNumericOrDuration_IntParseError_ReturnsFalse(t *testing.T) {
+	// Non-duration field (restart_count) with non-integer value.
+	_, ok := numericOrDuration("abc", "restart_count")
+	assert.False(t, ok)
+}

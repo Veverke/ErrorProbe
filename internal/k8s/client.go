@@ -117,6 +117,7 @@ func podToInfo(pod corev1.Pod) PodInfo {
 		if cs, ok := statusByName[c.Name]; ok {
 			ci.Ready = cs.Ready
 			ci.RestartCount = int(cs.RestartCount)
+			ci.ContainerID = cs.ContainerID
 			if cs.State.Running != nil {
 				ci.Running = true
 				ci.StartedAt = cs.State.Running.StartedAt.Time

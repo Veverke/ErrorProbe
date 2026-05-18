@@ -102,9 +102,19 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 		})
 		state := result.State
 		if state == "" {
-			// No rule matched — no state change for this event.
+			logger.Debug("pbr: no rule matched",
+				"container", logEventKey(ev),
+				"level", ev.Level,
+				"msg", truncateMsg(ev.Message, 120),
+			)
 			continue
 		}
+		logger.Debug("pbr: rule matched",
+			"container", logEventKey(ev),
+			"rule", result.MatchedRule,
+			"state", state,
+			"msg", truncateMsg(ev.Message, 120),
+		)
 		if state == "HAS_WARNINGS" {
 			key := logEventKey(ev)
 			prevCount := 0
@@ -192,19 +202,17 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 		matchedRule string
 	}
 	var pending []pendingTransition
-	if e.transitionEvents != nil {
-		for k, containerHealth := range e.snapshot.Containers {
-			prev := prevStates[k]
-			if containerHealth.State != prev {
-				ns, name := splitHealthKey(k)
-				pending = append(pending, pendingTransition{
-					container:   name,
-					namespace:   ns,
-					prevState:   prev,
-					newState:    containerHealth.State,
-					matchedRule: containerHealth.MatchedRule,
-				})
-			}
+	for k, containerHealth := range e.snapshot.Containers {
+		prev := prevStates[k]
+		if containerHealth.State != prev {
+			ns, name := splitHealthKey(k)
+			pending = append(pending, pendingTransition{
+				container:   name,
+				namespace:   ns,
+				prevState:   prev,
+				newState:    containerHealth.State,
+				matchedRule: containerHealth.MatchedRule,
+			})
 		}
 	}
 
@@ -222,6 +230,17 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 
 	evCh := e.transitionEvents
 	e.mu.Unlock()
+
+	// Log every state transition at Info so the log file captures the full
+	// history for GitHub issue diagnostics, even without --debug.
+	for _, t := range pending {
+		logger.Info("health: state transition",
+			"container", t.container,
+			"from", string(t.prevState),
+			"to", string(t.newState),
+			"rule", t.matchedRule,
+		)
+	}
 
 	// Emit transition events outside the lock to avoid deadlock when the
 	// channel consumer also interacts with the engine.
@@ -379,4 +398,18 @@ func hasNotableKeyword(s string) bool {
 		strings.Contains(lower, "fatal") ||
 		strings.Contains(lower, "panic") ||
 		strings.Contains(lower, "exception")
+}
+
+// truncateMsg returns the first n runes of s, with an ellipsis when truncated.
+// Used to keep log lines readable when messages contain stack traces.
+func truncateMsg(s string, n int) string {
+	// Use first line only to avoid multiline log values.
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }

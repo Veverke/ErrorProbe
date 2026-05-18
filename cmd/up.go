@@ -58,6 +58,12 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
+		// Log when the shutdown signal fires so the log file records why ep up stopped.
+		go func() {
+			<-ctx.Done()
+			logger.Info("ep up: shutdown signal received — stopping")
+		}()
+
 		// Quick initial container discovery to get the count for the ready banner.
 		bind := cfg.Stack.Ingest.Bind
 		if bind == "" {
@@ -73,8 +79,8 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		if err != nil {
 			return fmt.Errorf("initial container discovery: %w", err)
 		}
-		watched := discovery.ApplyPolicy(containers, cfg)
-		printReadyBanner(cfg, len(watched), ingestAddr)
+		_ = discovery.ApplyPolicy(containers, cfg)
+		printReadyBanner(cfg, ingestAddr)
 
 		// Write PID file so 'ep down --purge' can locate and terminate us.
 		pidPath := cfg.StateDir() + "ep.pid"
@@ -217,6 +223,11 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		for {
 			select {
 			case err := <-recErrCh:
+				if err != nil {
+					logger.Error("ep up: reconciler exited with error", "err", err)
+				} else {
+					logger.Info("ep up: reconciler stopped — exiting")
+				}
 				return err
 			case <-hupc:
 				newCfg, cfgErr := config.Load(cfgFile)
@@ -250,9 +261,9 @@ func printBoxed(msg string) {
 	fmt.Println(rule)
 }
 
-func printReadyBanner(cfg *config.Config, watchCount int, ingestAddr string) {
+func printReadyBanner(cfg *config.Config, ingestAddr string) {
 	fmt.Println()
-	fmt.Printf("  ErrorProbe is ready — watching %d containers\n", watchCount)
+	fmt.Printf("  ErrorProbe is ready — stack up\n")
 	fmt.Printf("  Grafana  http://localhost:%d\n", cfg.Stack.Grafana.Port)
 	fmt.Printf("  Loki     http://localhost:%d\n", cfg.Stack.Loki.Port)
 	fmt.Printf("  Ingest   http://%s\n", ingestAddr)

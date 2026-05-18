@@ -17,6 +17,7 @@ type PodInfo struct {
 type ContainerInfo struct {
 	Name         string
 	Image        string
+	ContainerID  string // runtime container ID (e.g. "containerd://abc123…"); may be empty
 	Ready        bool
 	RestartCount int
 	StartedAt    time.Time

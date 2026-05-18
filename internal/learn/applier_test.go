@@ -1,9 +1,15 @@
 package learn
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestApplier(t *testing.T) (*Applier, string, string, string) {
@@ -139,4 +145,141 @@ func TestApplier_ConfirmRule_NotFound(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when confirming nonexistent rule")
 	}
+}
+
+func TestApplier_Apply_OnReloadCalled(t *testing.T) {
+	dir := t.TempDir()
+	overlayPath := filepath.Join(dir, "learned.yaml")
+	pendingPath := filepath.Join(dir, "pending.yaml")
+	suppPath := filepath.Join(dir, "suppressed.yaml")
+
+	reloadCalled := false
+	a := NewApplier(overlayPath, pendingPath, suppPath, func() {
+		reloadCalled = true
+	})
+	r := sampleRule("reload-test")
+	require.NoError(t, a.Apply(r))
+	require.True(t, reloadCalled, "onReload callback must be called after Apply")
+}
+
+func TestApplier_ConfirmRule_FromOverlay(t *testing.T) {
+	// Rule is in the overlay (not pending) — ConfirmRule should still promote it.
+	a, overlayPath, pendingPath, _ := newTestApplier(t)
+	r := sampleRule("overlay-rule")
+	_ = a.Apply(r) // puts it in overlay, not pending
+
+	if err := a.ConfirmRule("overlay-rule"); err != nil {
+		t.Fatalf("ConfirmRule from overlay: %v", err)
+	}
+	overlay, _ := LoadOverlay(overlayPath)
+	var found bool
+	for _, rule := range overlay {
+		if rule.Name == "overlay-rule" && rule.Source == SourceConfirmed {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("rule not confirmed in overlay: %+v", overlay)
+	}
+	// Pending should remain empty.
+	pending, _ := LoadPending(pendingPath)
+	for _, rule := range pending {
+		if rule.Name == "overlay-rule" {
+			t.Error("confirmed rule should not be in pending")
+		}
+	}
+}
+
+func TestApplier_RejectRule_AlreadySuppressed_Idempotent(t *testing.T) {
+	a, _, _, suppPath := newTestApplier(t)
+	r := sampleRule("reject-idem")
+	_ = a.Apply(r)
+	// Reject twice — second call must not error (suppression is idempotent).
+	require.NoError(t, a.RejectRule("reject-idem", `regex:(?i)panic`))
+	require.NoError(t, a.RejectRule("reject-idem", `regex:(?i)panic`))
+	sl, err := LoadSuppressionList(suppPath)
+	require.NoError(t, err)
+	assert.True(t, sl.Contains(`regex:(?i)panic`))
+}
+
+func TestApplier_ConfirmRule_OnReloadCalled(t *testing.T) {
+	dir := t.TempDir()
+	reloadCalled := false
+	a := NewApplier(
+		filepath.Join(dir, "learned.yaml"),
+		filepath.Join(dir, "pending.yaml"),
+		filepath.Join(dir, "suppressed.yaml"),
+		func() { reloadCalled = true },
+	)
+	r := sampleRule("confirm-reload")
+	_ = a.Pending(r)
+	require.NoError(t, a.ConfirmRule("confirm-reload"))
+	assert.True(t, reloadCalled, "onReload must fire after ConfirmRule")
+}
+
+func TestApplier_Apply_CorruptOverlay_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	overlayPath := filepath.Join(dir, "learned.yaml")
+	// Write invalid YAML to trigger LoadOverlay error.
+	require.NoError(t, os.WriteFile(overlayPath, []byte("!!invalid: {unclosed"), 0o644))
+	a := NewApplier(overlayPath, filepath.Join(dir, "pending.yaml"), filepath.Join(dir, "supp.yaml"), nil)
+	err := a.Apply(sampleRule("bad"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "apply")
+}
+
+func TestApplier_Pending_CorruptPendingFile_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	pendingPath := filepath.Join(dir, "pending.yaml")
+	require.NoError(t, os.WriteFile(pendingPath, []byte("!!bad"), 0o644))
+	a := NewApplier(filepath.Join(dir, "learned.yaml"), pendingPath, filepath.Join(dir, "supp.yaml"), nil)
+	err := a.Pending(sampleRule("bad"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pending")
+}
+
+func TestApplier_RejectRule_CorruptSuppFile_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	suppPath := filepath.Join(dir, "supp.yaml")
+	require.NoError(t, os.WriteFile(suppPath, []byte("!!bad"), 0o644))
+	a := NewApplier(filepath.Join(dir, "learned.yaml"), filepath.Join(dir, "pending.yaml"), suppPath, nil)
+	// First put a rule in the overlay so RejectRule finds it.
+	_ = os.WriteFile(filepath.Join(dir, "learned.yaml"), []byte("[]"), 0o644)
+	r := sampleRule("to-reject")
+	_ = os.WriteFile(filepath.Join(dir, "learned.yaml"), marshalRules(t, []LearnedRule{r}), 0o644)
+	err := a.RejectRule("to-reject", `literal:error`)
+	require.Error(t, err)
+}
+
+// marshalRules serialises a slice of LearnedRule to YAML bytes for test setup.
+func marshalRules(t *testing.T, rules []LearnedRule) []byte {
+	t.Helper()
+	data, err := yaml.Marshal(rules)
+	require.NoError(t, err)
+	return data
+}
+
+func TestSaveOverlay_NonexistentDir_ReturnsError(t *testing.T) {
+	err := SaveOverlay("/nonexistent/deeply/nested/overlay.yaml", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "writing overlay file")
+}
+
+func TestSaveSuppressionList_NonexistentDir_ReturnsError(t *testing.T) {
+	err := SaveSuppressionList("/nonexistent/deeply/nested/supp.yaml", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "writing suppression file")
+}
+
+func TestRemoveRule_MultipleRules_RetainsNonMatchingRules(t *testing.T) {
+	// Exercises the append branch: rules that don't match name are kept.
+	rules := []LearnedRule{
+		{Name: "keep-me", Match: "log"},
+		{Name: "remove-me", Match: "log"},
+		{Name: "also-keep", Match: "infra"},
+	}
+	result := removeRule(rules, "remove-me")
+	require.Len(t, result, 2)
+	assert.Equal(t, "keep-me", result[0].Name)
+	assert.Equal(t, "also-keep", result[1].Name)
 }

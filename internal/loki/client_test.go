@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/errorprobe/errorprobe/internal/loki"
 )
@@ -429,4 +433,161 @@ func TestCountErrors_NumericValue_SkipsEntry(t *testing.T) {
 		t.Errorf("expected 0 for untyped count, got %d", n)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// QueryErrorMessages
+// ---------------------------------------------------------------------------
+
+func TestCountErrors_K8sNamespacedKey_BuildsNamespaceQuery(t *testing.T) {
+	var capturedQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query().Get("query")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{"resultType": "vector", "result": []interface{}{}},
+		})
+	}))
+	defer srv.Close()
+
+	client := loki.NewClient(srv.URL)
+	n, err := client.CountErrors(context.Background(), "production/payment-svc", 5*time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Contains(t, capturedQuery, "namespace")
+	assert.Contains(t, capturedQuery, "production")
+}
+
+func TestCountErrors_HTTPError_ReturnsError(t *testing.T) {
+	// Use a closed server to provoke a transport error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // close before use
+
+	client := loki.NewClient(srv.URL)
+	_, err := client.CountErrors(context.Background(), "myapp", time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "querying Loki count")
+}
+
+func TestCountErrors_BadJSON_ReturnsDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not-json"))
+	}))
+	defer srv.Close()
+
+	client := loki.NewClient(srv.URL)
+	_, err := client.CountErrors(context.Background(), "myapp", time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decoding Loki count response")
+}
+
+func buildQueryRangeStreamsPayload(container string, messages []string) map[string]interface{} {
+	now := time.Now()
+	var values [][2]string
+	for i, msg := range messages {
+		ts := now.Add(time.Duration(i) * time.Second)
+		values = append(values, [2]string{fmt.Sprintf("%d", ts.UnixNano()), msg})
+	}
+
+	entries := make([]interface{}, len(values))
+	for i, v := range values {
+		entries[i] = []interface{}{v[0], v[1]}
+	}
+
+	return map[string]interface{}{
+		"data": map[string]interface{}{
+			"resultType": "streams",
+			"result": []interface{}{
+				map[string]interface{}{
+					"stream": map[string]string{"container": container, "level": "error"},
+					"values": entries,
+				},
+			},
+		},
+	}
+}
+
+func TestQueryErrorMessages_DockerContainer_ReturnsMessages(t *testing.T) {
+	want := []string{"db connection refused", "timeout dialing postgres"}
+	payload := buildQueryRangeStreamsPayload("api", want)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer srv.Close()
+
+	client := loki.NewClient(srv.URL)
+	msgs, err := client.QueryErrorMessages(context.Background(), "api", 3*time.Minute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[0] != want[0] {
+		t.Errorf("first message: got %q want %q", msgs[0], want[0])
+	}
+}
+
+func TestQueryErrorMessages_K8sNamespacedKey_BuildsCorrectQuery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		if q == "" {
+			t.Errorf("expected non-empty query param")
+		}
+		// K8s key format should include namespace in the stream selector.
+		if !strings.Contains(q, `namespace`) {
+			t.Errorf("expected namespace in K8s query, got: %s", q)
+		}
+		payload := buildQueryRangeStreamsPayload("myapp", []string{"err msg"})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer srv.Close()
+
+	client := loki.NewClient(srv.URL)
+	msgs, err := client.QueryErrorMessages(context.Background(), "production/myapp", time.Minute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+}
+
+func TestQueryErrorMessages_LokiError_PropagatesError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := loki.NewClient(srv.URL)
+	_, err := client.QueryErrorMessages(context.Background(), "api", time.Minute)
+	if err == nil {
+		t.Fatal("expected an error for non-OK status")
+	}
+}
+
+func TestQueryErrorMessages_EmptyResult_ReturnsEmptySlice(t *testing.T) {
+	payload := map[string]interface{}{
+		"data": map[string]interface{}{
+			"resultType": "streams",
+			"result":     []interface{}{},
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer srv.Close()
+
+	client := loki.NewClient(srv.URL)
+	msgs, err := client.QueryErrorMessages(context.Background(), "api", time.Minute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected empty slice, got %d messages", len(msgs))
+	}
+}
+
 

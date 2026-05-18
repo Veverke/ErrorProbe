@@ -88,3 +88,15 @@ func TestSaveWatchSet_CreatesDirectory(t *testing.T) {
 	_, err := os.Stat(path)
 	assert.NoError(t, err)
 }
+
+func TestSaveWatchSet_MkdirAllError_ReturnsError(t *testing.T) {
+	// Place a plain file where MkdirAll would need to create a directory.
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	// The path's parent directory component is blocked by a regular file.
+	path := filepath.Join(blocker, "subdir", "containers.json")
+	err := discovery.SaveWatchSet(path, buildWatchSet())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating state directory")
+}

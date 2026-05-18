@@ -48,12 +48,15 @@ func (c *Client) ApplyVectorDaemonSet(ctx context.Context, image, vectorConfigTO
 }
 
 // DeleteVectorDaemonSet removes the Vector DaemonSet and supporting resources,
-// then polls until the DaemonSet is fully gone from the API server. This
-// prevents ApplyVectorDaemonSet from racing against a still-terminating
-// DaemonSet (which has DeletionTimestamp set) and silently re-using it only
-// to have K8s delete it moments later once all pods have terminated.
+// then polls until the DaemonSet object is gone from the API server.
+//
+// Background propagation is used so the DaemonSet object is removed from the
+// API immediately; pods are cleaned up asynchronously by the K8s garbage
+// collector. This makes the call return in under a second rather than blocking
+// until every pod has terminated (which can take minutes with Foreground
+// propagation and stalls 'ep restart' at the "removing vector daemonset…" step).
 func (c *Client) DeleteVectorDaemonSet(ctx context.Context) error {
-	del := metav1.DeletePropagationForeground
+	del := metav1.DeletePropagationBackground
 	opts := metav1.DeleteOptions{PropagationPolicy: &del}
 
 	_ = c.cs.AppsV1().DaemonSets(daemonSetNamespace).Delete(ctx, daemonSetName, opts)

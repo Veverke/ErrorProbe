@@ -108,11 +108,11 @@ func TestPBR_Builtin_ErrorLevel_SetsHasErrors(t *testing.T) {
 	assert.Equal(t, "builtin-log-error", ch.MatchedRule)
 }
 
-func TestPBR_Builtin_WarnLevel_SetsHasErrors(t *testing.T) {
+func TestPBR_Builtin_WarnLevel_SetsHasWarnings(t *testing.T) {
 	e := newEngine(t, mustLoad(t, nil, nil, pbr.BuiltinRules()))
 	e.ProcessBatch([]ingest.LogEvent{logEvent("svc", "warn", "deprecated")})
 	ch := e.Snapshot().Containers["svc"]
-	assert.Equal(t, health.StateHasErrors, ch.State)
+	assert.Equal(t, health.StateHasWarnings, ch.State)
 	assert.Equal(t, "builtin-log-warn", ch.MatchedRule)
 }
 
@@ -144,7 +144,7 @@ func TestPBR_Builtin_UppercaseERROR_NormalisedMatch(t *testing.T) {
 func TestPBR_Builtin_UppercaseWARN_NormalisedMatch(t *testing.T) {
 	e := newEngine(t, mustLoad(t, nil, nil, pbr.BuiltinRules()))
 	e.ProcessBatch([]ingest.LogEvent{logEvent("svc", "WARN", "uppercase warn")})
-	assert.Equal(t, health.StateHasErrors, e.Snapshot().Containers["svc"].State)
+	assert.Equal(t, health.StateHasWarnings, e.Snapshot().Containers["svc"].State)
 }
 
 func TestPBR_Builtin_MixedCaseError_NormalisedMatch(t *testing.T) {
@@ -191,12 +191,12 @@ func TestPBR_Builtin_Failing_CountZero_HitLogError(t *testing.T) {
 	assert.Equal(t, "builtin-log-error", result.MatchedRule)
 }
 
-// count=100 with warn level → HAS_ERRORS; builtin-failing only triggers on error.
+// count=100 with warn level → HAS_WARNINGS; builtin-failing only triggers on error.
 func TestPBR_Builtin_Failing_WarnHighCount_NotEscalated(t *testing.T) {
 	rules := mustLoad(t, nil, nil, pbr.BuiltinRules())
 	ctx := logCtxE2E("warn", "flood", "", "", "", 100, time.Minute)
 	result := pbr.Evaluate(rules, ctx)
-	assert.Equal(t, "HAS_ERRORS", result.State)
+	assert.Equal(t, "HAS_WARNINGS", result.State)
 	assert.Equal(t, "builtin-log-warn", result.MatchedRule)
 }
 

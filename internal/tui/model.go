@@ -307,6 +307,7 @@ func (m Model) View() string {
 	containerPod := make(map[string]string, len(m.ws.Containers))
 	containerNamespace := make(map[string]string, len(m.ws.Containers))
 	containerNode := make(map[string]string, len(m.ws.Containers))
+	containerID := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
 		key := c.HealthKey()
 		infraState[key] = c.InfraStatus
@@ -315,6 +316,7 @@ func (m Model) View() string {
 		containerPod[key] = c.Pod
 		containerNamespace[key] = c.Namespace
 		containerNode[key] = c.Node
+		containerID[key] = c.ID
 		if c.DisplayName != "" {
 			displayNameByKey[key] = c.DisplayName
 		}
@@ -608,6 +610,7 @@ func (m Model) View() string {
 			for _, dl := range m.buildExpandedLines(
 				name, ch, infra, innerW, rt,
 				containerPod[name], containerNamespace[name], containerNode[name],
+				containerID[name],
 				prevExitMsg[name], restartCount[name],
 			) {
 				contentRows = append(contentRows, dl)
@@ -676,6 +679,7 @@ func (m Model) buildExpandedLines(
 	innerW int,
 	runtime string,
 	pod, namespace, node string,
+	containerID string,
 	prevExit string,
 	restarts int,
 ) []string {
@@ -795,6 +799,15 @@ func (m Model) buildExpandedLines(
 			identity += "  node: " + node
 		}
 		lines = append(lines, row(identity))
+	}
+
+	// --- Container ID line ---
+	if containerID != "" {
+		shortID := containerID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+		lines = append(lines, row("  id: "+shortID))
 	}
 
 	// --- Blank separator ---
