@@ -229,7 +229,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err := m.applier.ConfirmRule(ch.MatchedRule); err != nil {
 						m.statusMsg = fmt.Sprintf("confirm: %v", err)
 					} else {
-						m.statusMsg = fmt.Sprintf("rule %q confirmed", ch.MatchedRule)
+						m.statusMsg = fmt.Sprintf("rule %q confirmed — send SIGHUP (ep reload) to apply in running stack", ch.MatchedRule)
 					}
 				} else {
 					m.statusMsg = "no pending learned rule for this container"
@@ -246,7 +246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err := m.applier.RejectRule(ch.MatchedRule, pattern); err != nil {
 						m.statusMsg = fmt.Sprintf("reject: %v", err)
 					} else {
-						m.statusMsg = fmt.Sprintf("rule %q rejected and pattern suppressed", ch.MatchedRule)
+						m.statusMsg = fmt.Sprintf("rule %q rejected — send SIGHUP (ep reload) to apply in running stack", ch.MatchedRule)
 					}
 				} else {
 					m.statusMsg = "no pending learned rule for this container"
