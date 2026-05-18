@@ -14,11 +14,12 @@ import (
 // Engine maintains the current HealthSnapshot, processes incoming log batches,
 // and persists state changes to disk.
 type Engine struct {
-	snapshot     HealthSnapshot
-	mu           sync.RWMutex
-	snapshotPath string
-	onChange     func(HealthSnapshot)
-	rules        []pbr.Rule // compiled PBR rule set; guarded by mu
+	snapshot         HealthSnapshot
+	mu               sync.RWMutex
+	snapshotPath     string
+	onChange         func(HealthSnapshot)
+	rules            []pbr.Rule                 // compiled PBR rule set; guarded by mu
+	transitionEvents chan<- StateTransitionEvent // nil when not wired; writes are non-blocking
 }
 
 // NewEngine creates an Engine that persists state to snapshotPath and calls
@@ -49,6 +50,16 @@ func NewEngine(snapshotPath string, rules []pbr.Rule, onChange func(HealthSnapsh
 	return e
 }
 
+// SetTransitionEvents wires ch as the destination for StateTransitionEvents
+// emitted by ProcessBatch. Pass a buffered channel to avoid blocking the
+// engine; dropped events are silently skipped when the channel is full.
+// Safe to call before the first ProcessBatch invocation.
+func (e *Engine) SetTransitionEvents(ch chan<- StateTransitionEvent) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.transitionEvents = ch
+}
+
 // SetRules atomically replaces the engine's compiled rule set.
 // Pass nil or an empty slice to clear all rules so that no events produce
 // health state changes until new rules are loaded.
@@ -76,7 +87,13 @@ func (e *Engine) Rules() []pbr.Rule {
 // If the snapshot changes it is persisted and onChange is called.
 func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+
+	// Snapshot per-container states BEFORE processing so we can detect
+	// transitions and emit StateTransitionEvents after releasing the lock.
+	prevStates := make(map[string]FunctionalState, len(e.snapshot.Containers))
+	for k, ch := range e.snapshot.Containers {
+		prevStates[k] = ch.State
+	}
 
 	changed := false
 	for _, ev := range events {
@@ -146,6 +163,31 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 		}
 	}
 
+	// Collect state transitions before releasing the lock.
+	type pendingTransition struct {
+		container   string
+		namespace   string
+		prevState   string
+		newState    string
+		matchedRule string
+	}
+	var pending []pendingTransition
+	if e.transitionEvents != nil {
+		for k, containerHealth := range e.snapshot.Containers {
+			prev := prevStates[k]
+			if containerHealth.State != prev {
+				ns, name := splitHealthKey(k)
+				pending = append(pending, pendingTransition{
+					container:   name,
+					namespace:   ns,
+					prevState:   string(prev),
+					newState:    string(containerHealth.State),
+					matchedRule: containerHealth.MatchedRule,
+				})
+			}
+		}
+	}
+
 	if changed {
 		e.snapshot.SnapshotAt = time.Now()
 		snap := e.snapshot.DeepCopy()
@@ -157,6 +199,40 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			e.onChange(snap)
 		}
 	}
+
+	evCh := e.transitionEvents
+	e.mu.Unlock()
+
+	// Emit transition events outside the lock to avoid deadlock when the
+	// channel consumer also interacts with the engine.
+	if evCh != nil {
+		now := time.Now()
+		for _, t := range pending {
+			select {
+			case evCh <- StateTransitionEvent{
+				Container:   t.container,
+				Namespace:   t.namespace,
+				PrevState:   t.prevState,
+				NewState:    t.newState,
+				MatchedRule: t.matchedRule,
+				At:          now,
+			}:
+			default:
+				// Channel full — drop the event rather than block.
+			}
+		}
+	}
+}
+
+// splitHealthKey splits a health-snapshot key into (namespace, container).
+// Docker keys are bare names; K8s keys are "namespace/container".
+func splitHealthKey(key string) (namespace, container string) {
+	for i, c := range key {
+		if c == '/' {
+			return key[:i], key[i+1:]
+		}
+	}
+	return "", key
 }
 
 // logEventKey returns the canonical health-snapshot key for a log event.

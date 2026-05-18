@@ -14,6 +14,27 @@ const (
 	StateFailing   FunctionalState = "FAILING" // reserved for Phase 6
 )
 
+// StateTransitionEvent is emitted by the Engine (and by the discovery
+// Reconciler for restart events) whenever a container's health state changes.
+// Consumers can receive these events from the channel returned by
+// Engine.TransitionEvents() to drive secondary analysis pipelines such as the
+// adaptive learning module.
+type StateTransitionEvent struct {
+	// Container is the health-snapshot key (bare name for Docker, "ns/name" for K8s).
+	Container string
+	// Namespace is the Kubernetes namespace, or empty for Docker containers.
+	Namespace string
+	// PrevState is the state before the transition ("OK", "HAS_ERRORS", "FAILING", or "").
+	// An empty string means the container was not previously tracked.
+	PrevState string
+	// NewState is the state after the transition ("OK", "HAS_ERRORS", "FAILING", "RESTARTED").
+	NewState string
+	// MatchedRule is the PBR rule name that triggered the new state (may be empty).
+	MatchedRule string
+	// At is the wall-clock time of the transition.
+	At time.Time
+}
+
 // ContainerHealth holds the current health state for a single container.
 type ContainerHealth struct {
 	Name                     string         `json:"name"`

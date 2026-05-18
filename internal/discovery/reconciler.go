@@ -9,6 +9,7 @@ import (
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/docker"
+	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/pbr"
@@ -31,15 +32,23 @@ type VectorGenerator interface {
 // Reconciler discovers containers on a tick, compares to the previous watch set,
 // regenerates Vector config on change, and signals Vector to reload.
 type Reconciler struct {
-	cfg       *config.Config
-	docker    docker.DockerAPI
-	k8s       k8s.K8sAPI // nil when K8s is not available
-	configgen VectorGenerator
-	onReload  func()
-	interval  time.Duration
-	statePath string
-	rulesMu   sync.RWMutex
-	rules     []pbr.Rule // guarded by rulesMu
+	cfg              *config.Config
+	docker           docker.DockerAPI
+	k8s              k8s.K8sAPI // nil when K8s is not available
+	configgen        VectorGenerator
+	onReload         func()
+	interval         time.Duration
+	statePath        string
+	rulesMu          sync.RWMutex
+	rules            []pbr.Rule                 // guarded by rulesMu
+	transitionEvents chan<- health.StateTransitionEvent // nil when not wired
+}
+
+// SetTransitionEvents wires ch as the destination for RESTARTED transition
+// events emitted when a container's restart count increases.
+// Safe to call before Run.
+func (r *Reconciler) SetTransitionEvents(ch chan<- health.StateTransitionEvent) {
+	r.transitionEvents = ch
 }
 
 // NewReconciler creates a Reconciler with the default interval.
@@ -140,6 +149,19 @@ func (r *Reconciler) tick(ctx context.Context) error {
 			if msg != "" {
 				approved[i].PrevExitMsg = msg
 				restartDiagChanged = true
+			}
+			// Emit a RESTARTED transition event for the learning module.
+			if r.transitionEvents != nil {
+				select {
+				case r.transitionEvents <- health.StateTransitionEvent{
+					Container: c.Name,
+					Namespace: c.Namespace,
+					PrevState: "OK",
+					NewState:  "RESTARTED",
+					At:        time.Now(),
+				}:
+				default:
+				}
 			}
 		} else if hasPrev && prev.PrevExitMsg != "" {
 			// Carry forward the diagnostic from the previous tick.

@@ -17,6 +17,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/ingest"
 	"github.com/errorprobe/errorprobe/internal/k8s"
+	"github.com/errorprobe/errorprobe/internal/learn"
 	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/loki"
 	"github.com/errorprobe/errorprobe/internal/pbr"
@@ -83,9 +84,11 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		}
 		defer pid.Remove(pidPath)
 
-		// Load and validate PBR rules. On error, report and abort so the user
-		// fixes the config before the stack starts.
-		compiledRules, rulesErr := pbr.Load(cfg.Rules, cfg.ContainerOverrides, pbr.BuiltinRules())
+		// Load and validate PBR rules. Merge in any overlay (learned) rules first.
+		// On error, report and abort so the user fixes the config before the stack starts.
+		overlayRules, _ := learn.LoadOverlay(cfg.LearnOverlayFile())
+		mergedRuleCfgs := learn.MergeOverlay(cfg.Rules, overlayRules)
+		compiledRules, rulesErr := pbr.Load(mergedRuleCfgs, cfg.ContainerOverrides, pbr.BuiltinRules())
 		if rulesErr != nil {
 			return fmt.Errorf("invalid rules configuration: %w", rulesErr)
 		}
@@ -149,6 +152,49 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		reconciler := discovery.NewReconciler(cfg, cli, k8sClient, gen, func() {}, compiledRules)
 
+		// Wire the learning module: shared channel for state-transition events.
+		transitionCh := make(chan health.StateTransitionEvent, 64)
+		engine.SetTransitionEvents(transitionCh)
+		reconciler.SetTransitionEvents(transitionCh)
+
+		// Build the learn-module reload callback (mirrors the SIGHUP reload).
+		learnReload := func() {
+			newCfg, cfgErr := config.Load(cfgFile)
+			if cfgErr != nil {
+				logger.Error("learn: reload config failed", "err", cfgErr)
+				return
+			}
+			newOverlay, _ := learn.LoadOverlay(newCfg.LearnOverlayFile())
+			newMerged := learn.MergeOverlay(newCfg.Rules, newOverlay)
+			newRules, rulesErr := pbr.Load(newMerged, newCfg.ContainerOverrides, pbr.BuiltinRules())
+			if rulesErr != nil {
+				logger.Error("learn: invalid rules after reload", "err", rulesErr)
+				return
+			}
+			engine.SetRules(newRules)
+			reconciler.SetRules(newRules)
+			logger.Info("PBR rules reloaded (learning module)")
+		}
+
+		applier := learn.NewApplier(
+			cfg.LearnOverlayFile(),
+			cfg.LearnPendingFile(),
+			cfg.LearnSuppressionFile(),
+			learnReload,
+		)
+		learnerSampler := learn.NewSampler(lokiClient)
+		learner := learn.NewLearner(
+			transitionCh,
+			learnerSampler,
+			applier,
+			engine.Rules,
+			cfg.Learn,
+			cfg.LearnSuppressionFile(),
+		)
+		if cfg.Learn.Enabled {
+			go learner.Run(ctx)
+		}
+
 		// Delete the state file so the first reconciler tick always regenerates
 		// the Vector config. This is necessary because up.go writes an empty
 		// include_containers list on startup; without this the reconciler would
@@ -171,7 +217,9 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 					logger.Error("rule hot-reload: failed to load config", "err", cfgErr)
 					continue
 				}
-				newRules, rulesErr := pbr.Load(newCfg.Rules, newCfg.ContainerOverrides, pbr.BuiltinRules())
+				newOverlay, _ := learn.LoadOverlay(newCfg.LearnOverlayFile())
+				newMerged := learn.MergeOverlay(newCfg.Rules, newOverlay)
+				newRules, rulesErr := pbr.Load(newMerged, newCfg.ContainerOverrides, pbr.BuiltinRules())
 				if rulesErr != nil {
 					logger.Error("rule hot-reload: invalid rules — keeping old rules", "err", rulesErr)
 					continue

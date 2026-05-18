@@ -11,6 +11,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/health"
+	"github.com/errorprobe/errorprobe/internal/learn"
 	"github.com/errorprobe/errorprobe/internal/tui"
 )
 
@@ -46,7 +47,10 @@ for all watched containers in real time, updating as new log events arrive.`,
 
 		grafanaBaseURL := fmt.Sprintf("http://localhost:%d", cfg.Stack.Grafana.Port)
 		cfgPath := config.ConfigFilePath(cfgFile)
-		model := tui.NewModel(snapshotPath, watchSetPath, snap, ws, grafanaBaseURL, cfgPath)
+		overlayPath := cfg.LearnOverlayFile()
+		applier := learn.NewApplier(overlayPath, cfg.LearnPendingFile(), cfg.LearnSuppressionFile(), nil)
+		model := tui.NewModel(snapshotPath, watchSetPath, snap, ws, grafanaBaseURL, cfgPath).
+			WithApplier(applier, overlayPath)
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("watch TUI: %w", err)

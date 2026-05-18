@@ -796,6 +796,59 @@ All generated files live in `~/.errorprobe/configs/`. They are overwritten on ev
 | `loki.yaml` | Loki retention and storage settings |
 | `grafana-datasource.yaml` | Grafana provisioning file that registers Loki as a data source |
 
+## Learning Module
+
+ErrorProbe can automatically learn new detection rules from observed log patterns. When a container transitions to an error state and no existing PBR rule matches the triggering log lines, the learning module extracts a stable regex pattern and generates a candidate rule.
+
+### How it works
+
+1. **Trigger** — A `StateTransitionEvent` (OK → HAS_ERRORS, OK → FAILING, or RESTARTED) fires inside the engine or reconciler.
+2. **Sampling** — The learner queries Loki for the container's logs across multiple time windows.
+3. **Filtering** — Messages matching known benign phrases ("no error", "error: \<nil\>", etc.) are discarded.
+4. **Extraction** — Volatile fragments (IP addresses, UUIDs, timestamps, large numbers) are replaced with regex placeholders.
+5. **Scoring** — A confidence score is computed: `keyword_multiplier × window_fraction × (1 − volatility_fraction)`.
+6. **Decision**:
+   - Score ≥ `confidence_threshold` → rule is written to the overlay file and loaded immediately.
+   - Score ≥ `review_threshold` → rule is written to the pending file for user review.
+   - Score below both thresholds → discarded.
+
+### The ⚑ indicator
+
+In the `ep watch` TUI, containers matched by a **learned** (not yet confirmed) rule show a `⚑ ?` suffix in the STATUS column and the EKG strip turns **cyan**. This signals that the detection is probabilistic and may benefit from human confirmation.
+
+### Confirming and rejecting learned rules
+
+With a container selected in the TUI:
+
+| Key | Action |
+|-----|--------|
+| `v` | **Validate** — promote the rule's source from `learned` to `confirmed`. The rule stays active and the `⚑` indicator disappears. |
+| `f` | **False-positive** — remove the rule from the overlay and add its pattern to the suppression list. The pattern will never be re-learned. |
+
+### Config options
+
+All options live under the `learn:` block in `errorprobe.yaml`:
+
+```yaml
+learn:
+  enabled: true                   # master switch
+  auto_apply: true                # write high-confidence rules immediately
+  confidence_threshold: 0.75      # minimum score for auto-apply
+  review_threshold: 0.50          # minimum score for pending review
+  overlay_file: ""                # defaults to <config-dir>/errorprobe.learned.yaml
+  suppression_file: ""            # defaults to <config-dir>/errorprobe.suppressed.yaml
+  background_scan: false          # periodically re-scan even without transitions
+  background_scan_interval: "6h"  # interval for background scans
+```
+
+### File locations
+
+| File | Purpose |
+|------|---------|
+| `errorprobe.learned.yaml` | Auto-applied and confirmed rules (merged into the active rule set on startup and hot-reload) |
+| `errorprobe.suppressed.yaml` | Patterns that must never be re-learned |
+| `<state-dir>/errorprobe.pending.yaml` | Rules awaiting user review via `v`/`f` in the TUI |
+
 ## Resetting to a Clean State
 
 To fully remove all ErrorProbe artifacts from a machine, run a single command:

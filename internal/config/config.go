@@ -22,6 +22,56 @@ type Config struct {
 	HistoryRetention   string                   `mapstructure:"history_retention"`
 	Rules              []RuleConfig             `mapstructure:"rules"`
 	ContainerOverrides map[string][]RuleConfig  `mapstructure:"container_overrides"`
+	Learn              LearnConfig              `mapstructure:"learn"`
+
+	// configDir is the absolute directory that contains errorprobe.yaml (or cwd
+	// when no project file is found). It is set by Load and used to resolve
+	// relative paths for the learning-module sidecar files.
+	configDir string
+}
+
+// LearnConfig holds settings for the adaptive rule-learning module.
+type LearnConfig struct {
+	// Enabled controls whether the learning module runs at all.
+	// Defaults to true.
+	Enabled bool `mapstructure:"enabled"`
+
+	// AutoApply automatically writes a new learned rule to the overlay file and
+	// triggers a soft reload when the confidence score exceeds ConfidenceThreshold.
+	// Defaults to true.
+	AutoApply bool `mapstructure:"auto_apply"`
+
+	// ConfidenceThreshold is the minimum score [0,1] a candidate must reach
+	// before it is auto-applied. Defaults to 0.75.
+	ConfidenceThreshold float64 `mapstructure:"confidence_threshold"`
+
+	// ReviewThreshold is the minimum score [0,1] to flag a candidate for user
+	// review (the ⚑ ? indicator) when AutoApply is false or confidence is below
+	// ConfidenceThreshold. Defaults to 0.50.
+	ReviewThreshold float64 `mapstructure:"review_threshold"`
+
+	// OverlayFile is the path to the confirmed/learned rule overlay YAML.
+	// Relative paths are resolved against the directory of errorprobe.yaml.
+	// Defaults to "errorprobe.learned.yaml" next to errorprobe.yaml.
+	OverlayFile string `mapstructure:"overlay_file"`
+
+	// SuppressionFile is the path to the suppression list YAML.
+	// Relative paths are resolved against the directory of errorprobe.yaml.
+	// Defaults to "errorprobe.suppressed.yaml" next to errorprobe.yaml.
+	SuppressionFile string `mapstructure:"suppression_file"`
+
+	// PromoteToConfig writes newly confirmed rules back into errorprobe.yaml.
+	// Defaults to false.
+	PromoteToConfig bool `mapstructure:"promote_to_config"`
+
+	// BackgroundScan enables periodic background scanning even when no state
+	// transition triggers have fired. Defaults to false.
+	BackgroundScan bool `mapstructure:"background_scan"`
+
+	// BackgroundScanInterval controls how often the background scan runs.
+	// Supports the same duration syntax as other config fields (e.g. "6h").
+	// Defaults to "6h".
+	BackgroundScanInterval string `mapstructure:"background_scan_interval"`
 }
 
 // RuleConfig is the raw, unvalidated representation of a PBR rule as loaded
@@ -149,6 +199,46 @@ func (c *Config) LogsDir() string {
 	return filepath.Join(homeDir(), ".errorprobe", "logs") + string(filepath.Separator)
 }
 
+// ConfigDir returns the directory that contains errorprobe.yaml (or the working
+// directory when no project file exists). Used for resolving relative paths in
+// the learning-module sidecar files.
+func (c *Config) ConfigDir() string { return c.configDir }
+
+// resolvePath resolves p against the config directory when p is relative and
+// configDir is known, otherwise against DataDir().
+func (c *Config) resolvePath(p, defaultName string) string {
+	if p != "" {
+		if filepath.IsAbs(p) {
+			return p
+		}
+		if c.configDir != "" {
+			return filepath.Join(c.configDir, p)
+		}
+	}
+	if c.configDir != "" {
+		return filepath.Join(c.configDir, defaultName)
+	}
+	return filepath.Join(c.DataDir(), defaultName)
+}
+
+// LearnOverlayFile returns the path to the learned-rule overlay file.
+// Defaults to "errorprobe.learned.yaml" next to errorprobe.yaml.
+func (c *Config) LearnOverlayFile() string {
+	return c.resolvePath(c.Learn.OverlayFile, "errorprobe.learned.yaml")
+}
+
+// LearnSuppressionFile returns the path to the pattern suppression list.
+// Defaults to "errorprobe.suppressed.yaml" next to errorprobe.yaml.
+func (c *Config) LearnSuppressionFile() string {
+	return c.resolvePath(c.Learn.SuppressionFile, "errorprobe.suppressed.yaml")
+}
+
+// LearnPendingFile returns the path to the pending (not-yet-confirmed) rule
+// scratch file. Always located in the state directory since it is transient.
+func (c *Config) LearnPendingFile() string {
+	return filepath.Join(c.StateDir(), "errorprobe.pending.yaml")
+}
+
 // Load reads configuration from projectDir/errorprobe.yaml, then
 // ~/.errorprobe/config.yaml, falling back to built-in defaults.
 // If projectDir is empty, only the global file and defaults are used.
@@ -202,6 +292,20 @@ func Load(projectDir string) (*Config, error) {
 		return nil, fmt.Errorf("invalid check.fail_on %q: must be HAS_ERRORS or FAILING", cfg.Check.FailOn)
 	}
 
+	// Determine the config source directory so path-resolution methods work
+	// correctly. Use the absolute form so callers don't need to know the cwd.
+	if projectDir != "" {
+		if abs, err := filepath.Abs(projectDir); err == nil {
+			cfg.configDir = abs
+		} else {
+			cfg.configDir = projectDir
+		}
+	} else {
+		if wd, err := os.Getwd(); err == nil {
+			cfg.configDir = wd
+		}
+	}
+
 	return &cfg, nil
 }
 
@@ -225,6 +329,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("check.exclude", []string{})
 	v.SetDefault("containers.exclude", []string{})
 	v.SetDefault("history_retention", "30d")
+	v.SetDefault("learn.enabled", true)
+	v.SetDefault("learn.auto_apply", true)
+	v.SetDefault("learn.confidence_threshold", 0.75)
+	v.SetDefault("learn.review_threshold", 0.50)
+	v.SetDefault("learn.promote_to_config", false)
+	v.SetDefault("learn.background_scan", false)
+	v.SetDefault("learn.background_scan_interval", "6h")
 }
 
 // ParseDuration extends time.ParseDuration with support for the "d" (days) suffix.
