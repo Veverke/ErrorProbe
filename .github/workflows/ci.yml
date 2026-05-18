@@ -28,6 +28,17 @@ jobs:
           go test -race -v ./... | awk -v total="$TOTAL" '/^--- (PASS|FAIL):/{n++; printf "%s [%d/%d]\n",$0,n,total; next}{print}'
           exit ${PIPESTATUS[0]}
 
+      - name: Coverage
+        run: go test -coverprofile=coverage.out -covermode=atomic ./internal/... ./cmd/...
+
+      - name: Upload coverage to Codecov
+        if: false
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: true
+
       - name: Integration tests
         run: |
           TOTAL=$(go test -tags integration -list '.*' ./test/e2e/ 2>/dev/null | awk '/^Test[A-Za-z]/{n++} END{print n+0}')

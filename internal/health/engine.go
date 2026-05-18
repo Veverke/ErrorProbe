@@ -20,6 +20,7 @@ type Engine struct {
 	onChange         func(HealthSnapshot)
 	rules            []pbr.Rule                 // compiled PBR rule set; guarded by mu
 	transitionEvents chan<- StateTransitionEvent // nil when not wired; writes are non-blocking
+	watchedKeys      map[string]struct{}        // nil = accept all; guarded by mu
 }
 
 // NewEngine creates an Engine that persists state to snapshotPath and calls
@@ -60,6 +61,19 @@ func (e *Engine) SetTransitionEvents(ch chan<- StateTransitionEvent) {
 	e.transitionEvents = ch
 }
 
+// SetWatchedKeys restricts ProcessBatch to events whose health key is present
+// in keys. Pass nil to accept events from all containers (the default).
+// This should be called whenever the approved watch set changes so that K8s
+// system containers (e.g. storage-provisioner) whose logs Vector forwards but
+// which are hidden from ep watch / ep list do not pollute the health state or
+// log file.
+// Safe to call concurrently with ProcessBatch.
+func (e *Engine) SetWatchedKeys(keys map[string]struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.watchedKeys = keys
+}
+
 // SetRules atomically replaces the engine's compiled rule set.
 // Pass nil or an empty slice to clear all rules so that no events produce
 // health state changes until new rules are loaded.
@@ -97,6 +111,15 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 
 	changed := false
 	for _, ev := range events {
+		// Skip events for containers not in the approved watch set so that K8s
+		// system containers (e.g. storage-provisioner) whose logs Vector
+		// forwards to the ingest endpoint do not produce health state changes
+		// or log entries.  nil means "accept all" (startup default).
+		if e.watchedKeys != nil {
+			if _, watched := e.watchedKeys[logEventKey(ev)]; !watched {
+				continue
+			}
+		}
 		result := pbr.Evaluate(e.rules, pbr.EvalContext{
 			Log: &pbr.LogEvalContext{Event: ev},
 		})

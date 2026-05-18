@@ -37,11 +37,20 @@ type Reconciler struct {
 	k8s              k8s.K8sAPI // nil when K8s is not available
 	configgen        VectorGenerator
 	onReload         func()
+	onApproved       func(WatchSet) // called after each tick that changes the watch set
 	interval         time.Duration
 	statePath        string
 	rulesMu          sync.RWMutex
 	rules            []pbr.Rule                 // guarded by rulesMu
 	transitionEvents chan<- health.StateTransitionEvent // nil when not wired
+}
+
+// SetOnApproved registers fn to be called after every reconciler tick that
+// changes the approved watch set. fn receives the new WatchSet. Use this to
+// keep the health engine's watched-key filter in sync with the policy.
+// Safe to call before Run.
+func (r *Reconciler) SetOnApproved(fn func(WatchSet)) {
+	r.onApproved = fn
 }
 
 // SetTransitionEvents wires ch as the destination for RESTARTED transition
@@ -259,7 +268,10 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		}
 	}
 
-	// 9. Notify caller whenever the watch set changed.
+	// 9. Notify callers whenever the watch set changed.
+	if r.onApproved != nil {
+		r.onApproved(current)
+	}
 	if r.onReload != nil {
 		r.onReload()
 	}

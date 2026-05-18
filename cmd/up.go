@@ -162,6 +162,17 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		reconciler := discovery.NewReconciler(cfg, cli, k8sClient, gen, func() {}, compiledRules)
 
+		// Keep the engine's watch filter in sync with the approved container set
+		// so events from K8s system pods (e.g. storage-provisioner) that Vector
+		// forwards to the ingest endpoint are silently discarded.
+		reconciler.SetOnApproved(func(ws discovery.WatchSet) {
+			keys := make(map[string]struct{}, len(ws.Containers))
+			for _, c := range ws.Containers {
+				keys[c.HealthKey()] = struct{}{}
+			}
+			engine.SetWatchedKeys(keys)
+		})
+
 		// Wire the learning module: shared channel for state-transition events.
 		transitionCh := make(chan health.StateTransitionEvent, 64)
 		engine.SetTransitionEvents(transitionCh)
