@@ -183,8 +183,8 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 	type pendingTransition struct {
 		container   string
 		namespace   string
-		prevState   string
-		newState    string
+		prevState   FunctionalState
+		newState    FunctionalState
 		matchedRule string
 	}
 	var pending []pendingTransition
@@ -196,8 +196,8 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 				pending = append(pending, pendingTransition{
 					container:   name,
 					namespace:   ns,
-					prevState:   string(prev),
-					newState:    string(containerHealth.State),
+					prevState:   prev,
+					newState:    containerHealth.State,
 					matchedRule: containerHealth.MatchedRule,
 				})
 			}

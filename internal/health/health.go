@@ -25,11 +25,10 @@ type StateTransitionEvent struct {
 	Container string
 	// Namespace is the Kubernetes namespace, or empty for Docker containers.
 	Namespace string
-	// PrevState is the state before the transition ("OK", "HAS_ERRORS", "FAILING", or "").
-	// An empty string means the container was not previously tracked.
-	PrevState string
-	// NewState is the state after the transition ("OK", "HAS_ERRORS", "FAILING", "RESTARTED").
-	NewState string
+	// PrevState is the state before the transition (empty string means the container was not previously tracked).
+	PrevState FunctionalState
+	// NewState is the state after the transition.
+	NewState FunctionalState
 	// MatchedRule is the PBR rule name that triggered the new state (may be empty).
 	MatchedRule string
 	// At is the wall-clock time of the transition.
