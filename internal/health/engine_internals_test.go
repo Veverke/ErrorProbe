@@ -210,3 +210,29 @@ func TestEngine_Reset_FiresOnChange(t *testing.T) {
 	assert.Equal(t, int32(1), callCount.Load())
 	assert.Equal(t, StateOK, e.Snapshot().Containers["svc"].State)
 }
+
+// ---------------------------------------------------------------------------
+// truncateMsg
+// ---------------------------------------------------------------------------
+
+func TestTruncateMsg_ShortString_Unchanged(t *testing.T) {
+	assert.Equal(t, "hello", truncateMsg("hello", 120))
+}
+
+func TestTruncateMsg_NewlineTruncatesAtNewline(t *testing.T) {
+	// Only the first line should be kept.
+	result := truncateMsg("first line\nsecond line", 120)
+	assert.Equal(t, "first line", result)
+}
+
+func TestTruncateMsg_LongString_Truncated(t *testing.T) {
+	long := string(make([]rune, 130))
+	for i := range []rune(long) {
+		long = long[:i] + "a" + long[i+1:]
+	}
+	result := truncateMsg(long, 120)
+	runes := []rune(result)
+	// Last rune must be the ellipsis added by truncateMsg.
+	assert.Equal(t, '…', runes[len(runes)-1])
+	assert.Equal(t, 121, len(runes)) // 120 chars + ellipsis
+}

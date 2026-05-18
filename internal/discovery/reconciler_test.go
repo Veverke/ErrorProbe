@@ -216,3 +216,21 @@ func TestReconciler_ErrorOnList_ContinuesLoop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, stub.calls.Load(), int32(1), "loop should have ticked multiple times despite errors")
 }
+
+func TestReconciler_SetOnApproved_CalledAfterTick(t *testing.T) {
+	gen := &fakeGenerator{}
+	r, _ := newReconcilerForTest(t, nil, nil, gen, nil)
+
+	var called atomic.Bool
+	r.SetOnApproved(func(_ discovery.WatchSet) {
+		called.Store(true)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	go r.Run(ctx) //nolint:errcheck
+
+	require.Eventually(t, called.Load, 500*time.Millisecond, 10*time.Millisecond,
+		"SetOnApproved callback should be invoked after the first tick")
+}

@@ -37,7 +37,7 @@ type Reconciler struct {
 	k8s              k8s.K8sAPI // nil when K8s is not available
 	configgen        VectorGenerator
 	onReload         func()
-	onApproved       func(WatchSet) // called after each tick that changes the watch set
+	onApproved       func(WatchSet) // called every tick with the current approved set; nil = no-op
 	interval         time.Duration
 	statePath        string
 	rulesMu          sync.RWMutex
@@ -45,9 +45,11 @@ type Reconciler struct {
 	transitionEvents chan<- health.StateTransitionEvent // nil when not wired
 }
 
-// SetOnApproved registers fn to be called after every reconciler tick that
-// changes the approved watch set. fn receives the new WatchSet. Use this to
-// keep the health engine's watched-key filter in sync with the policy.
+// SetOnApproved registers fn to be called after every reconciler tick with
+// the current approved watch set, regardless of whether the set changed.
+// Use this to keep the health engine's watched-key filter in sync with the
+// policy — it is important that the filter is initialised on the first tick
+// even when the container set is empty.
 // Safe to call before Run.
 func (r *Reconciler) SetOnApproved(fn func(WatchSet)) {
 	r.onApproved = fn
@@ -191,6 +193,13 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		GeneratedAt: time.Now(),
 	}
 
+	// Always notify the caller with the up-to-date approved set so that
+	// downstream filters (e.g. the health engine's watchedKeys) are
+	// initialised on the first tick even when the container set is empty.
+	if r.onApproved != nil {
+		r.onApproved(current)
+	}
+
 	// Detect infra-status changes on containers whose ID is unchanged but whose
 	// InfraStatus flipped (e.g. "restarting" → "running").  Diff only tracks
 	// structural adds/removes by ID, so without this check a container that
@@ -269,9 +278,6 @@ func (r *Reconciler) tick(ctx context.Context) error {
 	}
 
 	// 9. Notify callers whenever the watch set changed.
-	if r.onApproved != nil {
-		r.onApproved(current)
-	}
 	if r.onReload != nil {
 		r.onReload()
 	}

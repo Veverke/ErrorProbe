@@ -181,3 +181,44 @@ func TestEngine_SetRules_InvalidRules_OldRulesRetained(t *testing.T) {
 		t.Fatalf("old suppress-warn rule should still apply, got %q", state)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SetWatchedKeys filter tests
+// ---------------------------------------------------------------------------
+
+func TestEngine_SetWatchedKeys_NonWatchedContainerDropped(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
+
+	e.SetWatchedKeys(map[string]struct{}{"api": {}})
+
+	// Event for a non-watched container must be silently dropped.
+	e.ProcessBatch([]ingest.LogEvent{errEvent("storage-provisioner", "disk full")})
+	assert.Empty(t, e.Snapshot().Containers, "non-watched container should not appear in snapshot")
+
+	// Event for the watched container must still be processed.
+	e.ProcessBatch([]ingest.LogEvent{errEvent("api", "null pointer")})
+	assert.Equal(t, StateHasErrors, e.Snapshot().Containers["api"].State)
+}
+
+func TestEngine_SetWatchedKeys_NilAcceptsAll(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
+
+	// Start restricted, then open up by setting nil.
+	e.SetWatchedKeys(map[string]struct{}{"api": {}})
+	e.SetWatchedKeys(nil)
+
+	e.ProcessBatch([]ingest.LogEvent{errEvent("any-container", "boom")})
+	assert.Equal(t, StateHasErrors, e.Snapshot().Containers["any-container"].State)
+}
+
+func TestEngine_SetWatchedKeys_EmptySetBlocksAll(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
+
+	e.SetWatchedKeys(map[string]struct{}{}) // non-nil but empty
+
+	e.ProcessBatch([]ingest.LogEvent{errEvent("api", "boom")})
+	assert.Empty(t, e.Snapshot().Containers, "empty watch set should block all events")
+}
