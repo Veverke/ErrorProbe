@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/errorprobe/errorprobe/internal/config"
+	"github.com/errorprobe/errorprobe/internal/logger"
 )
 
 var restartPurgeFlag bool
@@ -45,6 +46,14 @@ Use --purge to wipe volumes and config before restarting (full clean restart).`,
 		}
 
 		// ── phase 2: up ──────────────────────────────────────────────────────
+		// runDown deletes ~/.errorprobe/ entirely, which removes the log
+		// directory and leaves the lumberjack instance pointing at a gone path.
+		// Re-create dirs and re-initialise the logger so that all log lines
+		// from the up phase are written to the new file, not silently dropped.
+		if err := config.EnsureDirs(cfg); err == nil {
+			_ = logger.Init(cfg.LogsDir()+"errorprobe.log", 10, 5)
+		}
+
 		fmt.Println()
 		fmt.Println("  ── up ──────────────────────────────────────────────────")
 		return upCmd.RunE(cmd, args)

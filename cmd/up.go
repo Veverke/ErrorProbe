@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/ingest"
 	"github.com/errorprobe/errorprobe/internal/k8s"
+	"github.com/errorprobe/errorprobe/internal/learn"
 	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/loki"
 	"github.com/errorprobe/errorprobe/internal/pbr"
@@ -56,6 +58,12 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
+		// Log when the shutdown signal fires so the log file records why ep up stopped.
+		go func() {
+			<-ctx.Done()
+			logger.Info("ep up: shutdown signal received — stopping")
+		}()
+
 		// Quick initial container discovery to get the count for the ready banner.
 		bind := cfg.Stack.Ingest.Bind
 		if bind == "" {
@@ -71,8 +79,8 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		if err != nil {
 			return fmt.Errorf("initial container discovery: %w", err)
 		}
-		watched := discovery.ApplyPolicy(containers, cfg)
-		printReadyBanner(cfg, len(watched), ingestAddr)
+		_ = discovery.ApplyPolicy(containers, cfg)
+		printReadyBanner(cfg, ingestAddr)
 
 		// Write PID file so 'ep down --purge' can locate and terminate us.
 		pidPath := cfg.StateDir() + "ep.pid"
@@ -83,9 +91,14 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		}
 		defer pid.Remove(pidPath)
 
-		// Load and validate PBR rules. On error, report and abort so the user
-		// fixes the config before the stack starts.
-		compiledRules, rulesErr := pbr.Load(cfg.Rules, cfg.ContainerOverrides, pbr.BuiltinRules())
+		// Load and validate PBR rules. Merge in any overlay (learned) rules first.
+		// On error, report and abort so the user fixes the config before the stack starts.
+		overlayRules, overlayErr := learn.LoadOverlay(cfg.LearnOverlayFile())
+		if overlayErr != nil && !errors.Is(overlayErr, os.ErrNotExist) {
+			logger.Warn("could not load learned overlay; starting without learned rules", "err", overlayErr)
+		}
+		mergedRuleCfgs := learn.MergeOverlay(cfg.Rules, overlayRules)
+		compiledRules, rulesErr := pbr.Load(mergedRuleCfgs, cfg.ContainerOverrides, pbr.BuiltinRules())
 		if rulesErr != nil {
 			return fmt.Errorf("invalid rules configuration: %w", rulesErr)
 		}
@@ -149,6 +162,63 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 
 		reconciler := discovery.NewReconciler(cfg, cli, k8sClient, gen, func() {}, compiledRules)
 
+		// Keep the engine's watch filter in sync with the approved container set
+		// so events from K8s system pods (e.g. storage-provisioner) that Vector
+		// forwards to the ingest endpoint are silently discarded.
+		reconciler.SetOnApproved(func(ws discovery.WatchSet) {
+			keys := make(map[string]struct{}, len(ws.Containers))
+			for _, c := range ws.Containers {
+				keys[c.HealthKey()] = struct{}{}
+			}
+			engine.SetWatchedKeys(keys)
+		})
+
+		// Wire the learning module: shared channel for state-transition events.
+		transitionCh := make(chan health.StateTransitionEvent, 64)
+		engine.SetTransitionEvents(transitionCh)
+		reconciler.SetTransitionEvents(transitionCh)
+
+		// Build the learn-module reload callback (mirrors the SIGHUP reload).
+		learnReload := func() {
+			newCfg, cfgErr := config.Load(cfgFile)
+			if cfgErr != nil {
+				logger.Error("learn: reload config failed", "err", cfgErr)
+				return
+			}
+			newOverlay, newOverlayErr := learn.LoadOverlay(newCfg.LearnOverlayFile())
+			if newOverlayErr != nil && !errors.Is(newOverlayErr, os.ErrNotExist) {
+				logger.Warn("learn: could not load overlay during reload; reloading without learned rules", "err", newOverlayErr)
+			}
+			newMerged := learn.MergeOverlay(newCfg.Rules, newOverlay)
+			newRules, rulesErr := pbr.Load(newMerged, newCfg.ContainerOverrides, pbr.BuiltinRules())
+			if rulesErr != nil {
+				logger.Error("learn: invalid rules after reload", "err", rulesErr)
+				return
+			}
+			engine.SetRules(newRules)
+			reconciler.SetRules(newRules)
+			logger.Info("PBR rules reloaded (learning module)")
+		}
+
+		applier := learn.NewApplier(
+			cfg.LearnOverlayFile(),
+			cfg.LearnPendingFile(),
+			cfg.LearnSuppressionFile(),
+			learnReload,
+		)
+		learnerSampler := learn.NewSampler(lokiClient)
+		learner := learn.NewLearner(
+			transitionCh,
+			learnerSampler,
+			applier,
+			engine.Rules,
+			cfg.Learn,
+			cfg.LearnSuppressionFile(),
+		)
+		if cfg.Learn.Enabled {
+			go learner.Run(ctx)
+		}
+
 		// Delete the state file so the first reconciler tick always regenerates
 		// the Vector config. This is necessary because up.go writes an empty
 		// include_containers list on startup; without this the reconciler would
@@ -164,6 +234,11 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 		for {
 			select {
 			case err := <-recErrCh:
+				if err != nil {
+					logger.Error("ep up: reconciler exited with error", "err", err)
+				} else {
+					logger.Info("ep up: reconciler stopped — exiting")
+				}
 				return err
 			case <-hupc:
 				newCfg, cfgErr := config.Load(cfgFile)
@@ -171,7 +246,12 @@ changes. Use CTRL+C to stop. A --detach flag is planned for a future release.`,
 					logger.Error("rule hot-reload: failed to load config", "err", cfgErr)
 					continue
 				}
-				newRules, rulesErr := pbr.Load(newCfg.Rules, newCfg.ContainerOverrides, pbr.BuiltinRules())
+				newOverlay, newOverlayErr := learn.LoadOverlay(newCfg.LearnOverlayFile())
+				if newOverlayErr != nil && !errors.Is(newOverlayErr, os.ErrNotExist) {
+					logger.Warn("rule hot-reload: could not load overlay; reloading without learned rules", "err", newOverlayErr)
+				}
+				newMerged := learn.MergeOverlay(newCfg.Rules, newOverlay)
+				newRules, rulesErr := pbr.Load(newMerged, newCfg.ContainerOverrides, pbr.BuiltinRules())
 				if rulesErr != nil {
 					logger.Error("rule hot-reload: invalid rules — keeping old rules", "err", rulesErr)
 					continue
@@ -192,9 +272,9 @@ func printBoxed(msg string) {
 	fmt.Println(rule)
 }
 
-func printReadyBanner(cfg *config.Config, watchCount int, ingestAddr string) {
+func printReadyBanner(cfg *config.Config, ingestAddr string) {
 	fmt.Println()
-	fmt.Printf("  ErrorProbe is ready — watching %d containers\n", watchCount)
+	fmt.Printf("  ErrorProbe is ready — stack up\n")
 	fmt.Printf("  Grafana  http://localhost:%d\n", cfg.Stack.Grafana.Port)
 	fmt.Printf("  Loki     http://localhost:%d\n", cfg.Stack.Loki.Port)
 	fmt.Printf("  Ingest   http://%s\n", ingestAddr)

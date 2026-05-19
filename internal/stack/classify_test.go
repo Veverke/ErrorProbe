@@ -241,3 +241,16 @@ func TestClassifyChanges_ContainerOverrides_IsSoft(t *testing.T) {
 		t.Error("expected HasSoft true when container_overrides change")
 	}
 }
+
+func TestClassifyChanges_SeverityPatternSameLengthDiffElement_IsSoft(t *testing.T) {
+	// Same length but different values — exercises the per-element comparison
+	// branch inside stringSlicesEqual.
+	a := baseCfg()
+	b := baseCfg()
+	a.Detection.SeverityPatterns.Error = []string{"error", "ERROR"}
+	b.Detection.SeverityPatterns.Error = []string{"error", "CRITICAL"} // same length, different element
+	cs := stack.ClassifyChanges(a, b)
+	if !cs.HasSoft {
+		t.Error("expected HasSoft true when error pattern element changes")
+	}
+}

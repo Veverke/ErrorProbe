@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,4 +149,205 @@ func TestLoad_MalformedProjectConfig(t *testing.T) {
 	_, err := Load(dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reading project config")
+}
+
+// ---------------------------------------------------------------------------
+// ConfigDir
+// ---------------------------------------------------------------------------
+
+func TestConfigDir_WithProjectDir_ReturnsAbs(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+
+	abs, _ := filepath.Abs(dir)
+	assert.Equal(t, abs, cfg.ConfigDir())
+}
+
+func TestConfigDir_NoProjectDir_ReturnsCwd(t *testing.T) {
+	// Load with empty projectDir → configDir not set → falls back to cwd.
+	cfg := &Config{}
+	wd, _ := os.Getwd()
+	assert.Equal(t, wd, cfg.ConfigDir())
+}
+
+// ---------------------------------------------------------------------------
+// ParseDuration
+// ---------------------------------------------------------------------------
+
+func TestParseDuration_Days(t *testing.T) {
+	d, err := ParseDuration("30d")
+	require.NoError(t, err)
+	assert.Equal(t, 30*24*time.Hour, d)
+}
+
+func TestParseDuration_OneDayExact(t *testing.T) {
+	d, err := ParseDuration("1d")
+	require.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, d)
+}
+
+func TestParseDuration_Standard_Hours(t *testing.T) {
+	d, err := ParseDuration("72h")
+	require.NoError(t, err)
+	assert.Equal(t, 72*time.Hour, d)
+}
+
+func TestParseDuration_Standard_Minutes(t *testing.T) {
+	d, err := ParseDuration("3m")
+	require.NoError(t, err)
+	assert.Equal(t, 3*time.Minute, d)
+}
+
+func TestParseDuration_InvalidDays(t *testing.T) {
+	_, err := ParseDuration("xd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid duration")
+}
+
+func TestParseDuration_InvalidStandard(t *testing.T) {
+	_, err := ParseDuration("5z")
+	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// ConfigFilePath
+// ---------------------------------------------------------------------------
+
+func TestConfigFilePath_WithProjectDir(t *testing.T) {
+	dir := t.TempDir()
+	p := ConfigFilePath(dir)
+	assert.Equal(t, filepath.Join(dir, "errorprobe.yaml"), p)
+}
+
+func TestConfigFilePath_LocalFileExists(t *testing.T) {
+	// Create errorprobe.yaml in the working directory; ConfigFilePath should find it.
+	dir := t.TempDir()
+	local := filepath.Join(dir, "errorprobe.yaml")
+	require.NoError(t, os.WriteFile(local, []byte("version: 1\n"), 0o644))
+
+	// Change working directory to the temp dir for the duration of the test.
+	orig, _ := os.Getwd()
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+
+	p := ConfigFilePath("")
+	assert.Equal(t, "errorprobe.yaml", p)
+}
+
+func TestConfigFilePath_NoLocalFile_FallsBackToGlobal(t *testing.T) {
+	// No local file, no projectDir → should return the global path.
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+
+	p := ConfigFilePath("")
+	home, _ := os.UserHomeDir()
+	assert.Equal(t, filepath.Join(home, ".errorprobe", "config.yaml"), p)
+}
+
+// ---------------------------------------------------------------------------
+// AppendExclude
+// ---------------------------------------------------------------------------
+
+func TestAppendExclude_NewFile_CreatesWithPattern(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "errorprobe.yaml")
+
+	require.NoError(t, AppendExclude(cfgPath, "noisy-container"))
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "noisy-container")
+	assert.Contains(t, string(data), "containers:")
+	assert.Contains(t, string(data), "exclude:")
+}
+
+func TestAppendExclude_ExistingFile_AppendsPattern(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "errorprobe.yaml")
+	initial := "version: 1\ncontainers:\n  exclude:\n    - first-container\n"
+	require.NoError(t, os.WriteFile(cfgPath, []byte(initial), 0o644))
+
+	require.NoError(t, AppendExclude(cfgPath, "second-container"))
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "first-container")
+	assert.Contains(t, content, "second-container")
+}
+
+func TestAppendExclude_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "errorprobe.yaml")
+	initial := "version: 1\ncontainers:\n  exclude:\n    - existing\n"
+	require.NoError(t, os.WriteFile(cfgPath, []byte(initial), 0o644))
+
+	require.NoError(t, AppendExclude(cfgPath, "existing"))
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	// Pattern should appear exactly once.
+	assert.Equal(t, 1, strings.Count(string(data), "- existing"))
+}
+
+func TestAppendExclude_NoExcludeSection_AppendsSection(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "errorprobe.yaml")
+	// Config with a containers block but no exclude key.
+	initial := "version: 1\nstack:\n  loki:\n    port: 3100\n"
+	require.NoError(t, os.WriteFile(cfgPath, []byte(initial), 0o644))
+
+	require.NoError(t, AppendExclude(cfgPath, "temp-job"))
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "temp-job")
+}
+
+// ---------------------------------------------------------------------------
+// Learn path helpers
+// ---------------------------------------------------------------------------
+
+func TestLearnOverlayFile_CustomPath(t *testing.T) {
+	dir := t.TempDir()
+	writeYAML(t, dir, "version: 1\nlearn:\n  overlay_file: /tmp/custom.yaml\n")
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/custom.yaml", cfg.LearnOverlayFile())
+}
+
+func TestLearnOverlayFile_DefaultIsNextToConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	abs, _ := filepath.Abs(dir)
+	assert.Equal(t, filepath.Join(abs, "errorprobe.learned.yaml"), cfg.LearnOverlayFile())
+}
+
+func TestLearnSuppressionFile_DefaultIsNextToConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	abs, _ := filepath.Abs(dir)
+	assert.Equal(t, filepath.Join(abs, "errorprobe.suppressed.yaml"), cfg.LearnSuppressionFile())
+}
+
+func TestLearnPendingFile_IsInStateDir(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	// Pending file must live in StateDir, not next to the config.
+	assert.True(t, strings.HasPrefix(cfg.LearnPendingFile(), cfg.StateDir()),
+		"pending file %q should be inside state dir %q", cfg.LearnPendingFile(), cfg.StateDir())
+	assert.True(t, strings.HasSuffix(cfg.LearnPendingFile(), "errorprobe.pending.yaml"))
+}
+
+func TestDataDir_ContainsErrorprobe(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	assert.Contains(t, cfg.DataDir(), ".errorprobe")
 }

@@ -46,7 +46,7 @@ func TestIngest_ErrorLog_SetsHasErrors(t *testing.T) {
 	assert.Equal(t, "connection refused", snap.Containers["myapp"].LastErrorMsg)
 }
 
-func TestIngest_WarnLog_SetsHasErrors(t *testing.T) {
+func TestIngest_WarnLog_SetsHasWarnings(t *testing.T) {
 	snapPath := filepath.Join(t.TempDir(), "health.json")
 	engine := health.NewEngine(snapPath, nil, nil)
 	addr := startTransport(t, engine.ProcessBatch)
@@ -56,7 +56,7 @@ func TestIngest_WarnLog_SetsHasErrors(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, status)
 	snap, err := health.LoadSnapshot(snapPath)
 	require.NoError(t, err)
-	assert.Equal(t, health.StateHasErrors, snap.Containers["svc"].State)
+	assert.Equal(t, health.StateHasWarnings, snap.Containers["svc"].State)
 }
 
 func TestIngest_InfoLog_DoesNotChangeState(t *testing.T) {

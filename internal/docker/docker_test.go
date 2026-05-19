@@ -756,3 +756,148 @@ func TestStartContainer_StartError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "starting container")
 }
+
+// ---------------------------------------------------------------------------
+// ContainerList
+// ---------------------------------------------------------------------------
+
+func TestContainerList_ReturnsRunningContainers(t *testing.T) {
+	f := newFakeSDK()
+	f.containers["loki"] = &fakeContainer{id: "abc123", running: true}
+	f.containers["vector"] = &fakeContainer{id: "def456", running: true}
+	c := newTestClient(f)
+
+	list, err := c.ContainerList(context.Background(), container.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, list, 2)
+}
+
+func TestContainerList_Error_PropagatesError(t *testing.T) {
+	f := newFakeSDK()
+	f.listErr = errors.New("daemon unavailable")
+	c := newTestClient(f)
+
+	_, err := c.ContainerList(context.Background(), container.ListOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing containers")
+}
+
+// ---------------------------------------------------------------------------
+// ContainerInspect
+// ---------------------------------------------------------------------------
+
+func TestContainerInspect_ReturnsInfo(t *testing.T) {
+	f := newFakeSDK()
+	f.containers["loki"] = &fakeContainer{id: "abc123", running: true}
+	c := newTestClient(f)
+
+	info, err := c.ContainerInspect(context.Background(), "loki")
+	require.NoError(t, err)
+	assert.Equal(t, "abc123", info.ID)
+}
+
+func TestContainerInspect_NotFound_ReturnsError(t *testing.T) {
+	f := newFakeSDK()
+	c := newTestClient(f)
+
+	_, err := c.ContainerInspect(context.Background(), "nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inspecting container")
+}
+
+// ---------------------------------------------------------------------------
+// DisconnectFromNetwork
+// ---------------------------------------------------------------------------
+
+func TestDisconnectFromNetwork_OK(t *testing.T) {
+	f := newFakeSDK()
+	f.networks["errorprobe-net"] = true
+	c := newTestClient(f)
+
+	err := c.DisconnectFromNetwork(context.Background(), "errorprobe-net", "loki")
+	assert.NoError(t, err)
+}
+
+func TestDisconnectFromNetwork_NotFound_ReturnsNil(t *testing.T) {
+	// DisconnectFromNetwork with a not-found error should return nil (best-effort cleanup).
+	f := newFakeSDK()
+	f2 := &fakeSDKWithDisconnectNotFound{fakeSDK: f}
+	c := docker.NewTestClient(f2)
+
+	err := c.DisconnectFromNetwork(context.Background(), "missing-net", "loki")
+	assert.NoError(t, err)
+}
+
+func TestDisconnectFromNetwork_OtherError_ReturnsError(t *testing.T) {
+	f := newFakeSDK()
+	f2 := &fakeSDKWithDisconnectError{fakeSDK: f, disconnectErr: errors.New("daemon busy")}
+	c := docker.NewTestClient(f2)
+
+	err := c.DisconnectFromNetwork(context.Background(), "net1", "loki")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disconnecting")
+}
+
+// ---------------------------------------------------------------------------
+// DisconnectNetworkEndpoints
+// ---------------------------------------------------------------------------
+
+func TestDisconnectNetworkEndpoints_NetworkNotFound_ReturnsNil(t *testing.T) {
+	f := newFakeSDK()
+	// "missing-net" is not in f.networks, so NetworkInspect returns ErrNotFound.
+	c := newTestClient(f)
+
+	found := c.DisconnectNetworkEndpoints(context.Background(), "missing-net")
+	assert.Nil(t, found)
+}
+
+func TestDisconnectNetworkEndpoints_NetworkExists_ReturnsEndpoints(t *testing.T) {
+	f := newFakeSDK()
+	f.networks["errorprobe-net"] = true
+	// Inject a fake NetworkInspect with endpoints.
+	f2 := &fakeSDKWithEndpoints{
+		fakeSDK: f,
+		endpoints: map[string]network.EndpointResource{
+			"container-abc123": {Name: "loki"},
+		},
+	}
+	c := docker.NewTestClient(f2)
+
+	found := c.DisconnectNetworkEndpoints(context.Background(), "errorprobe-net")
+	assert.Len(t, found, 1)
+	assert.Contains(t, found[0], "loki")
+}
+
+// ---------------------------------------------------------------------------
+// Helper fake SDK variants for network disconnect
+// ---------------------------------------------------------------------------
+
+// fakeSDKWithDisconnectNotFound returns ErrNotFound from NetworkDisconnect.
+type fakeSDKWithDisconnectNotFound struct{ *fakeSDK }
+
+func (f *fakeSDKWithDisconnectNotFound) NetworkDisconnect(_ context.Context, _, _ string, _ bool) error {
+	return errdefs.ErrNotFound
+}
+
+// fakeSDKWithDisconnectError returns a generic error from NetworkDisconnect.
+type fakeSDKWithDisconnectError struct {
+	*fakeSDK
+	disconnectErr error
+}
+
+func (f *fakeSDKWithDisconnectError) NetworkDisconnect(_ context.Context, _, _ string, _ bool) error {
+	return f.disconnectErr
+}
+
+// fakeSDKWithEndpoints provides a NetworkInspect that returns endpoints.
+type fakeSDKWithEndpoints struct {
+	*fakeSDK
+	endpoints map[string]network.EndpointResource
+}
+
+func (f *fakeSDKWithEndpoints) NetworkInspect(_ context.Context, name string, _ network.InspectOptions) (network.Inspect, error) {
+	if _, ok := f.networks[name]; !ok {
+		return network.Inspect{}, errdefs.ErrNotFound
+	}
+	return network.Inspect{Name: name, Containers: f.endpoints}, nil
+}

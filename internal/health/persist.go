@@ -25,8 +25,16 @@ func SaveSnapshot(path string, snap HealthSnapshot) error {
 		return fmt.Errorf("writing temp file: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		// On Windows, renaming over a file that is currently open by another
+		// process fails with "Access is denied" because os.Open does not set
+		// FILE_SHARE_DELETE.  Fall back to a direct write: os.WriteFile opens
+		// with GENERIC_WRITE which succeeds while a reader holds a shared read
+		// handle.  A partial write is safe — LoadSnapshot returns an error on
+		// bad JSON and callers skip the update, keeping in-memory state intact.
 		_ = os.Remove(tmp)
-		return fmt.Errorf("renaming temp file: %w", err)
+		if werr := os.WriteFile(path, data, 0o644); werr != nil {
+			return fmt.Errorf("renaming temp file: %w", err)
+		}
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/docker"
+	"github.com/errorprobe/errorprobe/internal/health"
 	"github.com/errorprobe/errorprobe/internal/k8s"
 	"github.com/errorprobe/errorprobe/internal/logger"
 	"github.com/errorprobe/errorprobe/internal/pbr"
@@ -31,15 +32,34 @@ type VectorGenerator interface {
 // Reconciler discovers containers on a tick, compares to the previous watch set,
 // regenerates Vector config on change, and signals Vector to reload.
 type Reconciler struct {
-	cfg       *config.Config
-	docker    docker.DockerAPI
-	k8s       k8s.K8sAPI // nil when K8s is not available
-	configgen VectorGenerator
-	onReload  func()
-	interval  time.Duration
-	statePath string
-	rulesMu   sync.RWMutex
-	rules     []pbr.Rule // guarded by rulesMu
+	cfg              *config.Config
+	docker           docker.DockerAPI
+	k8s              k8s.K8sAPI // nil when K8s is not available
+	configgen        VectorGenerator
+	onReload         func()
+	onApproved       func(WatchSet) // called every tick with the current approved set; nil = no-op
+	interval         time.Duration
+	statePath        string
+	rulesMu          sync.RWMutex
+	rules            []pbr.Rule                 // guarded by rulesMu
+	transitionEvents chan<- health.StateTransitionEvent // nil when not wired
+}
+
+// SetOnApproved registers fn to be called after every reconciler tick with
+// the current approved watch set, regardless of whether the set changed.
+// Use this to keep the health engine's watched-key filter in sync with the
+// policy — it is important that the filter is initialised on the first tick
+// even when the container set is empty.
+// Safe to call before Run.
+func (r *Reconciler) SetOnApproved(fn func(WatchSet)) {
+	r.onApproved = fn
+}
+
+// SetTransitionEvents wires ch as the destination for RESTARTED transition
+// events emitted when a container's restart count increases.
+// Safe to call before Run.
+func (r *Reconciler) SetTransitionEvents(ch chan<- health.StateTransitionEvent) {
+	r.transitionEvents = ch
 }
 
 // NewReconciler creates a Reconciler with the default interval.
@@ -141,6 +161,19 @@ func (r *Reconciler) tick(ctx context.Context) error {
 				approved[i].PrevExitMsg = msg
 				restartDiagChanged = true
 			}
+			// Emit a RESTARTED transition event for the learning module.
+			if r.transitionEvents != nil {
+				select {
+				case r.transitionEvents <- health.StateTransitionEvent{
+					Container: c.Name,
+					Namespace: c.Namespace,
+					PrevState: "OK",
+					NewState:  "RESTARTED",
+					At:        time.Now(),
+				}:
+				default:
+				}
+			}
 		} else if hasPrev && prev.PrevExitMsg != "" {
 			// Carry forward the diagnostic from the previous tick.
 			approved[i].PrevExitMsg = prev.PrevExitMsg
@@ -158,6 +191,13 @@ func (r *Reconciler) tick(ctx context.Context) error {
 	current := WatchSet{
 		Containers:  approved,
 		GeneratedAt: time.Now(),
+	}
+
+	// Always notify the caller with the up-to-date approved set so that
+	// downstream filters (e.g. the health engine's watchedKeys) are
+	// initialised on the first tick even when the container set is empty.
+	if r.onApproved != nil {
+		r.onApproved(current)
 	}
 
 	// Detect infra-status changes on containers whose ID is unchanged but whose
@@ -237,7 +277,7 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		}
 	}
 
-	// 9. Notify caller whenever the watch set changed.
+	// 9. Notify callers whenever the watch set changed.
 	if r.onReload != nil {
 		r.onReload()
 	}

@@ -56,7 +56,7 @@ func TestEngine_ProcessBatch_WarnEvent_FlipsState(t *testing.T) {
 	e.ProcessBatch([]ingest.LogEvent{warnEvent("api", "slow query")})
 
 	snap := e.Snapshot()
-	assert.Equal(t, StateHasErrors, snap.Containers["api"].State)
+	assert.Equal(t, StateHasWarnings, snap.Containers["api"].State)
 }
 
 func TestEngine_ProcessBatch_MultipleContainers(t *testing.T) {
@@ -146,9 +146,9 @@ func TestEngine_SetRules_NewRulesApplied(t *testing.T) {
 	// Reset state so the next event is the trigger.
 	require.NoError(t, e.Reset("svc"))
 
-	// Same warn event → HAS_ERRORS under the new rule set.
+	// Same warn event → HAS_WARNINGS under the new rule set.
 	e.ProcessBatch([]ingest.LogEvent{warnEvent("svc", "slow query")})
-	assert.Equal(t, StateHasErrors, e.Snapshot().Containers["svc"].State)
+	assert.Equal(t, StateHasWarnings, e.Snapshot().Containers["svc"].State)
 }
 
 // TestEngine_SetRules_InvalidRules_OldRulesRetained verifies the caller-side
@@ -180,4 +180,45 @@ func TestEngine_SetRules_InvalidRules_OldRulesRetained(t *testing.T) {
 	if state := snap.Containers["svc"].State; state != StateOK && state != "" {
 		t.Fatalf("old suppress-warn rule should still apply, got %q", state)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// SetWatchedKeys filter tests
+// ---------------------------------------------------------------------------
+
+func TestEngine_SetWatchedKeys_NonWatchedContainerDropped(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
+
+	e.SetWatchedKeys(map[string]struct{}{"api": {}})
+
+	// Event for a non-watched container must be silently dropped.
+	e.ProcessBatch([]ingest.LogEvent{errEvent("storage-provisioner", "disk full")})
+	assert.Empty(t, e.Snapshot().Containers, "non-watched container should not appear in snapshot")
+
+	// Event for the watched container must still be processed.
+	e.ProcessBatch([]ingest.LogEvent{errEvent("api", "null pointer")})
+	assert.Equal(t, StateHasErrors, e.Snapshot().Containers["api"].State)
+}
+
+func TestEngine_SetWatchedKeys_NilAcceptsAll(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
+
+	// Start restricted, then open up by setting nil.
+	e.SetWatchedKeys(map[string]struct{}{"api": {}})
+	e.SetWatchedKeys(nil)
+
+	e.ProcessBatch([]ingest.LogEvent{errEvent("any-container", "boom")})
+	assert.Equal(t, StateHasErrors, e.Snapshot().Containers["any-container"].State)
+}
+
+func TestEngine_SetWatchedKeys_EmptySetBlocksAll(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(filepath.Join(dir, "health.json"), nil, nil)
+
+	e.SetWatchedKeys(map[string]struct{}{}) // non-nil but empty
+
+	e.ProcessBatch([]ingest.LogEvent{errEvent("api", "boom")})
+	assert.Empty(t, e.Snapshot().Containers, "empty watch set should block all events")
 }

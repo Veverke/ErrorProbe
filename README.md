@@ -1,5 +1,13 @@
 # ErrorProbe
 
+[![CI](https://github.com/errorprobe/errorprobe/actions/workflows/ci.yml/badge.svg)](https://github.com/errorprobe/errorprobe/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/errorprobe/errorprobe/branch/main/graph/badge.svg)](https://codecov.io/gh/errorprobe/errorprobe)
+[![Go Report Card](https://goreportcard.com/badge/github.com/errorprobe/errorprobe)](https://goreportcard.com/report/github.com/errorprobe/errorprobe)
+[![Go Reference](https://pkg.go.dev/badge/github.com/errorprobe/errorprobe.svg)](https://pkg.go.dev/github.com/errorprobe/errorprobe)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/errorprobe/errorprobe)](go.mod)
+[![Release](https://img.shields.io/github/v/release/errorprobe/errorprobe)](https://github.com/errorprobe/errorprobe/releases/latest)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/errorprobe/errorprobe/badge)](https://securityscorecards.dev/viewer/?uri=github.com/errorprobe/errorprobe)
+
 A single Go binary that monitors your local Docker containers for errors in real time.
 
 No configuration required. Run one command; get answers in seconds.

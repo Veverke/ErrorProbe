@@ -18,6 +18,8 @@ vendor/
 cover
 cover_*
 coverage
+coverage*.html
+cov_funcs*.txt
 
 # IDE
 .idea/

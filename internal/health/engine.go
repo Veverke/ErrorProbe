@@ -14,11 +14,13 @@ import (
 // Engine maintains the current HealthSnapshot, processes incoming log batches,
 // and persists state changes to disk.
 type Engine struct {
-	snapshot     HealthSnapshot
-	mu           sync.RWMutex
-	snapshotPath string
-	onChange     func(HealthSnapshot)
-	rules        []pbr.Rule // compiled PBR rule set; guarded by mu
+	snapshot         HealthSnapshot
+	mu               sync.RWMutex
+	snapshotPath     string
+	onChange         func(HealthSnapshot)
+	rules            []pbr.Rule                 // compiled PBR rule set; guarded by mu
+	transitionEvents chan<- StateTransitionEvent // nil when not wired; writes are non-blocking
+	watchedKeys      map[string]struct{}        // nil = accept all; guarded by mu
 }
 
 // NewEngine creates an Engine that persists state to snapshotPath and calls
@@ -49,6 +51,29 @@ func NewEngine(snapshotPath string, rules []pbr.Rule, onChange func(HealthSnapsh
 	return e
 }
 
+// SetTransitionEvents wires ch as the destination for StateTransitionEvents
+// emitted by ProcessBatch. Pass a buffered channel to avoid blocking the
+// engine; dropped events are silently skipped when the channel is full.
+// Safe to call before the first ProcessBatch invocation.
+func (e *Engine) SetTransitionEvents(ch chan<- StateTransitionEvent) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.transitionEvents = ch
+}
+
+// SetWatchedKeys restricts ProcessBatch to events whose health key is present
+// in keys. Pass nil to accept events from all containers (the default).
+// This should be called whenever the approved watch set changes so that K8s
+// system containers (e.g. storage-provisioner) whose logs Vector forwards but
+// which are hidden from ep watch / ep list do not pollute the health state or
+// log file.
+// Safe to call concurrently with ProcessBatch.
+func (e *Engine) SetWatchedKeys(keys map[string]struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.watchedKeys = keys
+}
+
 // SetRules atomically replaces the engine's compiled rule set.
 // Pass nil or an empty slice to clear all rules so that no events produce
 // health state changes until new rules are loaded.
@@ -76,24 +101,69 @@ func (e *Engine) Rules() []pbr.Rule {
 // If the snapshot changes it is persisted and onChange is called.
 func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+
+	// Snapshot per-container states BEFORE processing so we can detect
+	// transitions and emit StateTransitionEvents after releasing the lock.
+	prevStates := make(map[string]FunctionalState, len(e.snapshot.Containers))
+	for k, ch := range e.snapshot.Containers {
+		prevStates[k] = ch.State
+	}
 
 	changed := false
 	for _, ev := range events {
+		// Skip events for containers not in the approved watch set so that K8s
+		// system containers (e.g. storage-provisioner) whose logs Vector
+		// forwards to the ingest endpoint do not produce health state changes
+		// or log entries.  nil means "accept all" (startup default).
+		if e.watchedKeys != nil {
+			if _, watched := e.watchedKeys[logEventKey(ev)]; !watched {
+				continue
+			}
+		}
 		result := pbr.Evaluate(e.rules, pbr.EvalContext{
 			Log: &pbr.LogEvalContext{Event: ev},
 		})
 		state := result.State
 		if state == "" {
-			// No rule matched — no state change for this event.
+			logger.Debug("pbr: no rule matched",
+				"container", logEventKey(ev),
+				"level", ev.Level,
+				"msg", truncateMsg(ev.Message, 120),
+			)
 			continue
 		}
-		if state == "HAS_ERRORS" || state == "FAILING" {
+		logger.Debug("pbr: rule matched",
+			"container", logEventKey(ev),
+			"rule", result.MatchedRule,
+			"state", state,
+			"msg", truncateMsg(ev.Message, 120),
+		)
+		if state == "HAS_WARNINGS" {
 			key := logEventKey(ev)
 			prevCount := 0
 			if ch, ok := e.snapshot.Containers[key]; ok {
 				prevCount = ch.ErrorCount
 			}
+			e.snapshot.SetWarn(key, extractNotableLines(ev.Message), ev.Timestamp)
+			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
+				changed = true
+			}
+			if ch, ok := e.snapshot.Containers[key]; ok {
+				if result.MatchedRule != "" {
+					ch.MatchedRule = result.MatchedRule
+				}
+				e.snapshot.Containers[key] = ch
+			}
+		} else if state == "HAS_ERRORS" || state == "FAILING" {
+			key := logEventKey(ev)
+			prevCount := 0
+			if ch, ok := e.snapshot.Containers[key]; ok {
+				prevCount = ch.ErrorCount
+			}
+			// Pass the raw message to SetError so that multi-line stack traces,
+			// "Caused by:" chains, and Python/Java traceback frames are preserved
+			// verbatim. extractNotableLines is only applied for HAS_WARNINGS, where
+			// filtering noisy continuation lines is desirable.
 			e.snapshot.SetError(key, ev.Message, ev.Timestamp)
 			if ch, ok := e.snapshot.Containers[key]; ok && ch.ErrorCount != prevCount {
 				changed = true
@@ -146,6 +216,29 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 		}
 	}
 
+	// Collect state transitions before releasing the lock.
+	type pendingTransition struct {
+		container   string
+		namespace   string
+		prevState   FunctionalState
+		newState    FunctionalState
+		matchedRule string
+	}
+	var pending []pendingTransition
+	for k, containerHealth := range e.snapshot.Containers {
+		prev := prevStates[k]
+		if containerHealth.State != prev {
+			ns, name := splitHealthKey(k)
+			pending = append(pending, pendingTransition{
+				container:   name,
+				namespace:   ns,
+				prevState:   prev,
+				newState:    containerHealth.State,
+				matchedRule: containerHealth.MatchedRule,
+			})
+		}
+	}
+
 	if changed {
 		e.snapshot.SnapshotAt = time.Now()
 		snap := e.snapshot.DeepCopy()
@@ -157,6 +250,51 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 			e.onChange(snap)
 		}
 	}
+
+	evCh := e.transitionEvents
+	e.mu.Unlock()
+
+	// Log every state transition at Info so the log file captures the full
+	// history for GitHub issue diagnostics, even without --debug.
+	for _, t := range pending {
+		logger.Info("health: state transition",
+			"container", t.container,
+			"from", string(t.prevState),
+			"to", string(t.newState),
+			"rule", t.matchedRule,
+		)
+	}
+
+	// Emit transition events outside the lock to avoid deadlock when the
+	// channel consumer also interacts with the engine.
+	if evCh != nil {
+		now := time.Now()
+		for _, t := range pending {
+			select {
+			case evCh <- StateTransitionEvent{
+				Container:   t.container,
+				Namespace:   t.namespace,
+				PrevState:   t.prevState,
+				NewState:    t.newState,
+				MatchedRule: t.matchedRule,
+				At:          now,
+			}:
+			default:
+				// Channel full — drop the event rather than block.
+			}
+		}
+	}
+}
+
+// splitHealthKey splits a health-snapshot key into (namespace, container).
+// Docker keys are bare names; K8s keys are "namespace/container".
+func splitHealthKey(key string) (namespace, container string) {
+	for i, c := range key {
+		if c == '/' {
+			return key[:i], key[i+1:]
+		}
+	}
+	return "", key
 }
 
 // logEventKey returns the canonical health-snapshot key for a log event.
@@ -247,4 +385,54 @@ func (e *Engine) SetRecovered(name string) error {
 		e.onChange(snap)
 	}
 	return nil
+}
+
+// extractNotableLines filters a (potentially multi-line) log message down to
+// only the lines that contain a warn or error keyword.
+// When a message is a single line, or no line contains a keyword, the original
+// message is returned unchanged so callers always get something useful.
+//
+// This addresses the case where Vector delivers a multi-line "block" (e.g. the
+// entire initdb initialisation output).  Rather than storing the whole block or
+// only the triggering line, we store the lines that carry the signal.
+func extractNotableLines(msg string) string {
+	lines := strings.Split(msg, "\n")
+	if len(lines) <= 1 {
+		return msg
+	}
+	var notable []string
+	for _, l := range lines {
+		if hasNotableKeyword(l) {
+			notable = append(notable, strings.TrimSpace(l))
+		}
+	}
+	if len(notable) == 0 {
+		return msg
+	}
+	return strings.Join(notable, " | ")
+}
+
+// hasNotableKeyword reports whether a log line contains a word that marks it
+// as an error or warning line (as opposed to a stack-frame or continuation line).
+func hasNotableKeyword(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "error") ||
+		strings.Contains(lower, "warn") ||
+		strings.Contains(lower, "fatal") ||
+		strings.Contains(lower, "panic") ||
+		strings.Contains(lower, "exception")
+}
+
+// truncateMsg returns the first n runes of s, with an ellipsis when truncated.
+// Used to keep log lines readable when messages contain stack traces.
+func truncateMsg(s string, n int) string {
+	// Use first line only to avoid multiline log values.
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }

@@ -244,6 +244,8 @@ Opens a full-screen terminal UI that polls the health snapshot every second and 
 | `e` | Expand / collapse the selected container's detail panel |
 | `←` / `→` | Scroll the expanded error message horizontally |
 | `r` | Reset the selected container's health state to OK |
+| `v` | **Validate** a learned rule matched to the selected container — promote it from `learned` to `confirmed` (see [Learning Module](#learning-module)) |
+| `f` | **False-positive** — reject a learned rule and suppress its pattern so it is never re-learned |
 | `h` | Hide the selected container for this session |
 | `u` | Unhide all session-hidden containers |
 | `x` | Permanently exclude the selected container (appends to `containers.exclude` in `errorprobe.yaml`) |
@@ -425,6 +427,18 @@ history_retention: 30d   # how long state-transition records are kept in history
 # Policy-Based Rules — see "Policy-Based Rules" section below
 rules: []
 container_overrides: {}
+
+# Adaptive rule learning — see "Learning Module" section below
+learn:
+  enabled: false                  # master switch; set true to enable
+  auto_apply: true                # write high-confidence rules to overlay immediately
+  confidence_threshold: 0.75      # minimum score for auto-apply
+  review_threshold: 0.50          # minimum score to place in pending review
+  overlay_file: ""                # defaults to <config-dir>/errorprobe.learned.yaml
+  suppression_file: ""            # defaults to <config-dir>/errorprobe.suppressed.yaml
+  promote_to_config: false        # (planned) offer to merge confirmed rules into errorprobe.yaml
+  background_scan: false          # periodically re-scan all containers even without transitions
+  background_scan_interval: "6h" # interval for background scans (requires background_scan: true)
 ```
 
 ### Excluding containers
@@ -796,6 +810,74 @@ All generated files live in `~/.errorprobe/configs/`. They are overwritten on ev
 | `loki.yaml` | Loki retention and storage settings |
 | `grafana-datasource.yaml` | Grafana provisioning file that registers Loki as a data source |
 
+## Learning Module
+
+ErrorProbe can automatically learn new detection rules from observed log patterns. When a container transitions to an error state and no existing PBR rule matches the triggering log lines, the learning module extracts a stable regex pattern and generates a candidate rule.
+
+### How it works
+
+1. **Trigger** — A `StateTransitionEvent` (OK → HAS_ERRORS, OK → FAILING, or RESTARTED) fires inside the engine or reconciler.
+2. **Sampling** — The learner queries Loki for the container's logs across multiple time windows.
+3. **Filtering** — Messages matching known benign phrases ("no error", "error: \<nil\>", etc.) are discarded.
+4. **Extraction** — Volatile fragments (IP addresses, UUIDs, timestamps, large numbers) are replaced with regex placeholders.
+5. **Scoring** — A confidence score is computed: `keyword_multiplier × window_fraction × (1 − volatility_fraction)`.
+6. **Decision**:
+   - Score ≥ `confidence_threshold` → rule is written to the overlay file and loaded immediately.
+   - Score ≥ `review_threshold` → rule is written to the pending file for user review.
+   - Score below both thresholds → discarded.
+
+### The ⚑ indicator
+
+In the `ep watch` TUI, containers matched by a **learned** (not yet confirmed) rule show a `⚑ ?` suffix in the STATUS column and the EKG strip turns **cyan**. This signals that the detection is probabilistic and may benefit from human confirmation.
+
+### Confirming and rejecting learned rules
+
+With a container selected in the TUI:
+
+| Key | Action |
+|-----|--------|
+| `v` | **Validate** — promote the rule's source from `learned` to `confirmed`. The rule stays active and the `⚑` indicator disappears. |
+| `f` | **False-positive** — remove the rule from the overlay and add its pattern to the suppression list. The pattern will never be re-learned. |
+
+> **Reload required:** `v` and `f` update the overlay and suppression files on disk immediately, but the running `ep up` process will not pick up the change until it receives a reload signal. After pressing either key, run `errorprobe reload` (or send SIGHUP to the `ep up` process on Unix) to apply the change to the live rule set. The TUI status bar will remind you with: *"send SIGHUP (ep reload) to apply in running stack"*.
+
+### Config options
+
+All options live under the `learn:` block in `errorprobe.yaml`:
+
+```yaml
+learn:
+  enabled: true                   # master switch
+  auto_apply: true                # write high-confidence rules immediately
+  confidence_threshold: 0.75      # minimum score for auto-apply
+  review_threshold: 0.50          # minimum score for pending review
+  overlay_file: ""                # defaults to <config-dir>/errorprobe.learned.yaml
+  suppression_file: ""            # defaults to <config-dir>/errorprobe.suppressed.yaml
+  promote_to_config: false        # (planned) offer to merge confirmed rules into errorprobe.yaml
+  background_scan: false          # periodically re-scan even without transitions
+  background_scan_interval: "6h"  # interval for background scans (requires background_scan: true)
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `false` | Master switch. When `false`, no scanning or overlay loading occurs. |
+| `auto_apply` | `true` | Automatically write rules that meet `confidence_threshold` to the overlay. When `false`, all candidates go to the pending file regardless of score. |
+| `confidence_threshold` | `0.75` | Minimum confidence score (0–1) for a candidate rule to be auto-applied. |
+| `review_threshold` | `0.50` | Minimum confidence score for a candidate to be written to the pending file for manual review. Candidates below this threshold are silently discarded. |
+| `overlay_file` | `""` | Path to the learned-rule overlay file. Empty string uses `<config-dir>/errorprobe.learned.yaml`. |
+| `suppression_file` | `""` | Path to the suppression list. Empty string uses `<config-dir>/errorprobe.suppressed.yaml`. |
+| `promote_to_config` | `false` | *(Planned)* When `true`, ErrorProbe will periodically suggest merging long-lived confirmed rules directly into `errorprobe.yaml`. |
+| `background_scan` | `false` | When `true`, trigger a periodic scan of all containers even without a health state transition. |
+| `background_scan_interval` | `"6h"` | How often the background scan runs. Ignored when `background_scan` is `false`. Accepts Go duration syntax (`30m`, `6h`). |
+
+### File locations
+
+| File | Purpose |
+|------|---------|
+| `errorprobe.learned.yaml` | Auto-applied and confirmed rules (merged into the active rule set on startup and hot-reload) |
+| `errorprobe.suppressed.yaml` | Patterns that must never be re-learned |
+| `<state-dir>/errorprobe.pending.yaml` | Rules awaiting user review via `v`/`f` in the TUI |
+
 ## Resetting to a Clean State
 
 To fully remove all ErrorProbe artifacts from a machine, run a single command:
@@ -817,7 +899,10 @@ This removes the Docker containers, network, data volumes, and the entire `~/.er
 | `~/.errorprobe/state/health.json` | Health snapshot — current functional state of every watched container |
 | `~/.errorprobe/state/history.jsonl` | State-transition log — one JSON record per health state change |
 | `~/.errorprobe/state/ep.pid` | PID file written by `errorprobe up`; used by `errorprobe down` to terminate it |
+| `~/.errorprobe/state/errorprobe.pending.yaml` | Learned-rule candidates awaiting review via `v`/`f` in the TUI (learning module) |
 | `~/.errorprobe/logs/errorprobe.log` | ErrorProbe's own structured log (rotated; max 10 × 5 MB) |
+| `<config-dir>/errorprobe.learned.yaml` | Auto-applied and confirmed learned rules; merged into the active rule set on startup and reload |
+| `<config-dir>/errorprobe.suppressed.yaml` | Patterns permanently suppressed via the `f` key; never re-learned |
 
 Docker volumes `loki-data` and `grafana-data` hold persisted log data and Grafana state respectively. They survive `errorprobe down` unless `--purge` is used.
 

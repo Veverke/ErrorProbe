@@ -14,6 +14,7 @@ import (
 	"github.com/errorprobe/errorprobe/internal/config"
 	"github.com/errorprobe/errorprobe/internal/discovery"
 	"github.com/errorprobe/errorprobe/internal/health"
+	"github.com/errorprobe/errorprobe/internal/learn"
 	"github.com/errorprobe/errorprobe/internal/links"
 )
 
@@ -60,13 +61,20 @@ type Model struct {
 	quitting       bool
 	ekgOffset      int
 	statusMsg      string
+
+	// Learning-module fields (optional; nil/empty when module is disabled).
+	overlay     []learn.LearnedRule // cached from overlayPath on each tick
+	overlayPath string              // path to errorprobe.learned.yaml
+	applier     *learn.Applier      // nil when ep watch is run without ep up
 }
 
 var (
 	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	okStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	warnStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))  // dark yellow for warnings
 	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	failStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	inferredStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // cyan for learned rules
 	borderStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	detailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))  // steel-blue; expanded panel text
@@ -96,6 +104,15 @@ func (m Model) Init() tea.Cmd {
 		tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }),
 		tea.Tick(ekgInterval, func(time.Time) tea.Msg { return ekgMsg{} }),
 	)
+}
+
+// WithApplier attaches the learning-module applier to the model so the [v] and
+// [f] keys work. overlayPath is the overlay file to read on each tick for the
+// ⚑ ? indicator. Call this after NewModel before passing the model to Bubbletea.
+func (m Model) WithApplier(applier *learn.Applier, overlayPath string) Model {
+	m.applier = applier
+	m.overlayPath = overlayPath
+	return m
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -202,6 +219,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.expanded = false
 				}
 			}
+		case "v":
+			// Validate: confirm the learned rule matched to the selected container.
+			rows := m.sortedNames()
+			if m.cursor < len(rows) && m.applier != nil {
+				name := rows[m.cursor]
+				ch := m.snap.Containers[name]
+				if ch.MatchedRule != "" && m.isLearnedRule(ch.MatchedRule) {
+					if err := m.applier.ConfirmRule(ch.MatchedRule); err != nil {
+						m.statusMsg = fmt.Sprintf("confirm: %v", err)
+					} else {
+						m.statusMsg = fmt.Sprintf("rule %q confirmed — send SIGHUP (ep reload) to apply in running stack", ch.MatchedRule)
+					}
+				} else {
+					m.statusMsg = "no pending learned rule for this container"
+				}
+			}
+		case "f":
+			// False-positive: reject the learned rule and suppress its pattern.
+			rows := m.sortedNames()
+			if m.cursor < len(rows) && m.applier != nil {
+				name := rows[m.cursor]
+				ch := m.snap.Containers[name]
+				if ch.MatchedRule != "" && m.isLearnedRule(ch.MatchedRule) {
+					pattern := m.learnedPattern(ch.MatchedRule)
+					if err := m.applier.RejectRule(ch.MatchedRule, pattern); err != nil {
+						m.statusMsg = fmt.Sprintf("reject: %v", err)
+					} else {
+						m.statusMsg = fmt.Sprintf("rule %q rejected — send SIGHUP (ep reload) to apply in running stack", ch.MatchedRule)
+					}
+				} else {
+					m.statusMsg = "no pending learned rule for this container"
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -216,6 +266,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ws, err := discovery.LoadWatchSet(m.watchSetPath)
 		if err == nil {
 			m.ws = ws
+		}
+		if m.overlayPath != "" {
+			if overlay, err := learn.LoadOverlay(m.overlayPath); err == nil {
+				m.overlay = overlay
+			}
 		}
 		return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
 			return tickMsg(t)
@@ -252,6 +307,7 @@ func (m Model) View() string {
 	containerPod := make(map[string]string, len(m.ws.Containers))
 	containerNamespace := make(map[string]string, len(m.ws.Containers))
 	containerNode := make(map[string]string, len(m.ws.Containers))
+	containerID := make(map[string]string, len(m.ws.Containers))
 	for _, c := range m.ws.Containers {
 		key := c.HealthKey()
 		infraState[key] = c.InfraStatus
@@ -260,6 +316,7 @@ func (m Model) View() string {
 		containerPod[key] = c.Pod
 		containerNamespace[key] = c.Namespace
 		containerNode[key] = c.Node
+		containerID[key] = c.ID
 		if c.DisplayName != "" {
 			displayNameByKey[key] = c.DisplayName
 		}
@@ -279,7 +336,7 @@ func (m Model) View() string {
 	for _, ch := range m.snap.Containers {
 		if ch.State == health.StateFailing {
 			isFailing = true
-		} else if ch.State == health.StateHasErrors {
+		} else if ch.State == health.StateHasErrors || ch.State == health.StateHasWarnings {
 			hasErrors = true
 		}
 	}
@@ -298,6 +355,14 @@ func (m Model) View() string {
 		ekgColor = lipgloss.Color("9") // bright red
 	} else if hasErrors {
 		ekgColor = lipgloss.Color("11") // bright yellow
+	} else {
+		// Cyan when at least one container is matched by a learned (not yet confirmed) rule.
+		for _, ch := range m.snap.Containers {
+			if ch.MatchedRule != "" && m.isLearnedRule(ch.MatchedRule) {
+				ekgColor = lipgloss.Color("14") // bright cyan
+				break
+			}
+		}
 	}
 	ekgSty := lipgloss.NewStyle().Foreground(ekgColor)
 	ekgRows := m.renderEKG(m.width)
@@ -423,6 +488,14 @@ func (m Model) View() string {
 		var funcStyled string
 		var lastErr string
 		switch ch.State {
+		case health.StateHasWarnings:
+			funcText = fmt.Sprintf("! HAS WARNINGS %d", ch.ErrorCount)
+			funcStyled = warnStyle.Render(funcText)
+			if ch.LastErrorAt != nil {
+				lastErr = ch.LastErrorAt.Format("15:04") + " " + humanMsg(ch.LastErrorMsg)
+			} else {
+				lastErr = "—"
+			}
 		case health.StateHasErrors:
 			funcText = fmt.Sprintf("⚠ HAS ERRORS %d", ch.ErrorCount)
 			funcStyled = errStyle.Render(funcText)
@@ -457,8 +530,13 @@ func (m Model) View() string {
 				funcStyled = failStyle.Render(funcText)
 				lastErr = "infra: " + infra
 			default:
-				funcText = "✓ OK"
-				funcStyled = okStyle.Render(funcText)
+				if ch.MatchedRule != "" && m.isLearnedRule(ch.MatchedRule) {
+					funcText = "✓ OK ⚑ ?"
+					funcStyled = inferredStyle.Render(funcText)
+				} else {
+					funcText = "✓ OK"
+					funcStyled = okStyle.Render(funcText)
+				}
 				lastErr = "—"
 			}
 		}
@@ -491,12 +569,18 @@ func (m Model) View() string {
 			c1 = selectedBg.Render(c1)
 			var selFuncSty lipgloss.Style
 			switch ch.State {
+			case health.StateHasWarnings:
+				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Background(lipgloss.Color(selBg))
 			case health.StateHasErrors:
 				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(lipgloss.Color(selBg))
 			case health.StateFailing:
 				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(selBg))
 			default:
-				selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color(selBg))
+				if ch.MatchedRule != "" && m.isLearnedRule(ch.MatchedRule) {
+					selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(lipgloss.Color(selBg))
+				} else {
+					selFuncSty = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(lipgloss.Color(selBg))
+				}
 			}
 			c2 = selFuncSty.Render(" " + truncPad(funcText, col2W) + " ")
 			var selInfraSty lipgloss.Style
@@ -526,6 +610,7 @@ func (m Model) View() string {
 			for _, dl := range m.buildExpandedLines(
 				name, ch, infra, innerW, rt,
 				containerPod[name], containerNamespace[name], containerNode[name],
+				containerID[name],
 				prevExitMsg[name], restartCount[name],
 			) {
 				contentRows = append(contentRows, dl)
@@ -594,6 +679,7 @@ func (m Model) buildExpandedLines(
 	innerW int,
 	runtime string,
 	pod, namespace, node string,
+	containerID string,
 	prevExit string,
 	restarts int,
 ) []string {
@@ -614,6 +700,15 @@ func (m Model) buildExpandedLines(
 	// --- Line 1: error summary (h-scrollable) ---
 	var summary string
 	switch ch.State {
+	case health.StateHasWarnings:
+		if ch.LastErrorMsg != "" {
+			summary = fmt.Sprintf("!  last warning (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+		} else {
+			summary = fmt.Sprintf("!  has warnings (%d total, no message)", ch.ErrorCount)
+		}
+		if prevExit != "" {
+			summary += "  │  prev exit: " + prevExit
+		}
 	case health.StateHasErrors:
 		if ch.LastErrorMsg != "" {
 			summary = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
@@ -706,6 +801,15 @@ func (m Model) buildExpandedLines(
 		lines = append(lines, row(identity))
 	}
 
+	// --- Container ID line ---
+	if containerID != "" {
+		shortID := containerID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+		lines = append(lines, row("  id: "+shortID))
+	}
+
 	// --- Blank separator ---
 	lines = append(lines, row(""))
 
@@ -757,8 +861,8 @@ func (m Model) renderHeader(n int) []string {
 	title := headerStyle.Render(fmt.Sprintf(" ErrorProbe  watching %d containers", n))
 	titleW := lipgloss.Width(title)
 
-	hintsAll := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [h] hide  [u] unhide  [x] exclude  [g] grafana  [o] overview  [w] watch  [q] quit"
-	hintsA := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [h] hide  [u] unhide  [x] exclude"
+	hintsAll := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [h] hide  [u] unhide  [x] exclude  [v] confirm rule  [f] false-positive  [g] grafana  [o] overview  [w] watch  [q] quit"
+	hintsA := "[↑↓] navigate  [e] expand  [←→] scroll  [r] reset  [h] hide  [u] unhide  [x] exclude  [v] confirm  [f] false-positive"
 	hintsB := "[g] grafana explore  [o] overview  [w] watch  [q] quit"
 
 	w := m.width
@@ -820,6 +924,30 @@ func (m Model) sortedNames() []string {
 		return dispByKey[names[i]] < dispByKey[names[j]]
 	})
 	return names
+}
+
+// isLearnedRule reports whether ruleName corresponds to a learned (not yet
+// confirmed) rule in the cached overlay.
+func (m Model) isLearnedRule(ruleName string) bool {
+	for _, r := range m.overlay {
+		if r.Name == ruleName && r.Source == learn.SourceLearned {
+			return true
+		}
+	}
+	return false
+}
+
+// learnedPattern returns the raw pattern string for a learned rule by name.
+// Returns an empty string when the rule is not found.
+func (m Model) learnedPattern(ruleName string) string {
+	for _, r := range m.overlay {
+		if r.Name == ruleName {
+			if p, ok := r.When["message"]; ok {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 // healthKeyDisplay returns the human-readable container name portion of a health key.

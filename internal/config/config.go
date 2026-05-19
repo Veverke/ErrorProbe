@@ -11,6 +11,19 @@ import (
 	"github.com/spf13/viper"
 )
 
+// LearnConfig holds the adaptive rule-learning settings.
+type LearnConfig struct {
+	Enabled                 bool    `mapstructure:"enabled"`
+	AutoApply               bool    `mapstructure:"auto_apply"`
+	ConfidenceThreshold     float64 `mapstructure:"confidence_threshold"`
+	ReviewThreshold         float64 `mapstructure:"review_threshold"`
+	OverlayFile             string  `mapstructure:"overlay_file"`
+	SuppressionFile         string  `mapstructure:"suppression_file"`
+	PromoteToConfig         bool    `mapstructure:"promote_to_config"`
+	BackgroundScan          bool    `mapstructure:"background_scan"`
+	BackgroundScanInterval  string  `mapstructure:"background_scan_interval"`
+}
+
 // Config holds the full errorprobe.yaml configuration.
 type Config struct {
 	Version            int                      `mapstructure:"version"`
@@ -22,6 +35,11 @@ type Config struct {
 	HistoryRetention   string                   `mapstructure:"history_retention"`
 	Rules              []RuleConfig             `mapstructure:"rules"`
 	ContainerOverrides map[string][]RuleConfig  `mapstructure:"container_overrides"`
+	Learn              LearnConfig              `mapstructure:"learn"`
+
+	// configDir is set by Load() to the directory containing the project config
+	// file. It drives the default paths for learned/suppression overlay files.
+	configDir string
 }
 
 // RuleConfig is the raw, unvalidated representation of a PBR rule as loaded
@@ -107,12 +125,14 @@ type Containers struct {
 // with ErrorProbe.  They strip the noisy random suffixes that Kubernetes appends
 // to container names.  Used whenever Containers.DisplayNamePatterns is empty.
 var DefaultDisplayNamePatterns = []string{
-	// K8s StatefulSet / Job / Deployment instance suffix: strip the trailing 5-char random suffix.
-	// e.g.  selling-counter-couchdb-vx8fw  →  selling-counter-couchdb
-	// e.g.  payments-api-7d9f6b8c4-vx8fw  →  payments-api-7d9f6b8c4
-	// (For Deployment names the ReplicaSet hash remains; it is stable across restarts
-	//  and far less noisy than the ever-changing instance suffix.)
-	`^(.*)-[a-z0-9]{5}$`,
+	// K8s instance suffix: strip any trailing hyphenated segment that contains at
+	// least one digit (i.e. looks like a random hash or ordinal number).
+	// e.g.  selling-counter-couchdb-vx8fw  →  selling-counter-couchdb  (suffix has digit 8)
+	// e.g.  payments-api-7d9f6b8c4-vx8fw  →  payments-api-7d9f6b8c4  (suffix has digit 8)
+	// e.g.  postgres-0                     →  postgres                 (ordinal)
+	// All-letter suffixes like "-pgsql", "-redis", "-mysql" are intentional parts of
+	// the name and are NOT stripped.
+	`^(.*)-[a-z0-9]*[0-9][a-z0-9]*$`,
 }
 
 // K8sConfig holds Kubernetes discovery settings.
@@ -126,6 +146,40 @@ type K8sConfig struct {
 type Check struct {
 	FailOn  string   `mapstructure:"fail_on"`
 	Exclude []string `mapstructure:"exclude"`
+}
+
+// ConfigDir returns the directory containing the project config file.
+// Falls back to the current working directory when the project dir was not set.
+func (c *Config) ConfigDir() string {
+	if c.configDir != "" {
+		return c.configDir
+	}
+	wd, _ := os.Getwd()
+	return wd
+}
+
+// resolvePath returns path if non-empty, otherwise returns defaultPath.
+func resolvePath(path, defaultPath string) string {
+	if path != "" {
+		return path
+	}
+	return defaultPath
+}
+
+// LearnOverlayFile returns the path to the learned-rules overlay file.
+func (c *Config) LearnOverlayFile() string {
+	return resolvePath(c.Learn.OverlayFile, filepath.Join(c.ConfigDir(), "errorprobe.learned.yaml"))
+}
+
+// LearnSuppressionFile returns the path to the suppression list file.
+func (c *Config) LearnSuppressionFile() string {
+	return resolvePath(c.Learn.SuppressionFile, filepath.Join(c.ConfigDir(), "errorprobe.suppressed.yaml"))
+}
+
+// LearnPendingFile returns the path to the pending-review rules file.
+// It always lives in the state directory so it is not accidentally committed.
+func (c *Config) LearnPendingFile() string {
+	return filepath.Join(c.StateDir(), "errorprobe.pending.yaml")
 }
 
 // DataDir returns the root ~/.errorprobe/ directory that holds all
@@ -198,8 +252,18 @@ func Load(projectDir string) (*Config, error) {
 		return nil, fmt.Errorf("unsupported version %d: only version 1 is supported", cfg.Version)
 	}
 
-	if cfg.Check.FailOn != "" && cfg.Check.FailOn != "HAS_ERRORS" && cfg.Check.FailOn != "FAILING" {
-		return nil, fmt.Errorf("invalid check.fail_on %q: must be HAS_ERRORS or FAILING", cfg.Check.FailOn)
+	if cfg.Check.FailOn != "" && cfg.Check.FailOn != "HAS_WARNINGS" && cfg.Check.FailOn != "HAS_ERRORS" && cfg.Check.FailOn != "FAILING" {
+		return nil, fmt.Errorf("invalid check.fail_on %q: must be HAS_WARNINGS, HAS_ERRORS, or FAILING", cfg.Check.FailOn)
+	}
+
+	// Store the config directory so path helpers can compute overlay file defaults.
+	if projectDir != "" {
+		abs, err := filepath.Abs(projectDir)
+		if err == nil {
+			cfg.configDir = abs
+		} else {
+			cfg.configDir = projectDir
+		}
 	}
 
 	return &cfg, nil
@@ -225,6 +289,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("check.exclude", []string{})
 	v.SetDefault("containers.exclude", []string{})
 	v.SetDefault("history_retention", "30d")
+	v.SetDefault("learn.enabled", true)
+	v.SetDefault("learn.auto_apply", true)
+	v.SetDefault("learn.confidence_threshold", 0.75)
+	v.SetDefault("learn.review_threshold", 0.50)
+	v.SetDefault("learn.promote_to_config", false)
+	v.SetDefault("learn.background_scan", false)
+	v.SetDefault("learn.background_scan_interval", "6h")
 }
 
 // ParseDuration extends time.ParseDuration with support for the "d" (days) suffix.

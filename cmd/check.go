@@ -29,8 +29,9 @@ watched container has reached or exceeded the health state configured in fail_on
 (default: HAS_ERRORS). Designed for use in CI pipelines and test scripts.
 
 fail_on values:
-  HAS_ERRORS  exit 1 when any container has state HAS_ERRORS or FAILING (default)
-  FAILING     exit 1 only when a container has state FAILING (Tier 2 detection required)`,
+  HAS_WARNINGS  exit 1 when any container has state HAS_WARNINGS, HAS_ERRORS, or FAILING
+  HAS_ERRORS    exit 1 when any container has state HAS_ERRORS or FAILING (default)
+  FAILING       exit 1 only when a container has state FAILING (Tier 2 detection required)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(cfgFile)
 		if err != nil {
@@ -263,6 +264,15 @@ func evalCheck(snap health.HealthSnapshot, check config.Check) (bool, []CheckRes
 			continue
 		}
 		switch failOn {
+		case "HAS_WARNINGS":
+			if ch.State == health.StateHasWarnings || ch.State == health.StateHasErrors || ch.State == health.StateFailing {
+				failing = append(failing, CheckResult{
+					Name:         healthKeyDisplay(key),
+					State:        string(ch.State),
+					LastErrorAt:  ch.LastErrorAt,
+					LastErrorMsg: ch.LastErrorMsg,
+				})
+			}
 		case "HAS_ERRORS":
 			if ch.State == health.StateHasErrors || ch.State == health.StateFailing {
 				failing = append(failing, CheckResult{
