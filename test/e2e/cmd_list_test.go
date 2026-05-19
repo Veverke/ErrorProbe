@@ -32,7 +32,8 @@ func tablePrefix(name string) string {
 // TestCmd_List_DefaultTable verifies the default tabular output contains the
 // expected columns and shows the stub container.
 func TestCmd_List_DefaultTable(t *testing.T) {
-	name := startAlpineContainer(t, uniqueName("ep-e2e-list"))
+	const base = "ep-e2e-list"
+	startAlpineContainer(t, uniqueName(base))
 
 	stdout, _, exitCode := runEP(t, tempHome(t), "list")
 
@@ -41,7 +42,9 @@ func TestCmd_List_DefaultTable(t *testing.T) {
 	assert.Contains(t, stdout, "CONTAINER", "header row must contain CONTAINER column")
 	assert.Contains(t, stdout, "STATUS", "header row must contain STATUS column")
 	assert.Contains(t, stdout, "WATCHING", "header row must contain WATCHING column")
-	assert.Contains(t, stdout, tablePrefix(name), "stub container must appear in default table output")
+	// The list command renders DisplayName, which strips the timestamp suffix via
+	// DefaultDisplayNamePatterns — assert on the base name that will be shown.
+	assert.Contains(t, stdout, tablePrefix(base), "stub container must appear in default table output")
 	assert.Contains(t, stdout, "docker", "runtime column must show 'docker'")
 }
 
@@ -103,12 +106,14 @@ func TestCmd_List_Details(t *testing.T) {
 // TestCmd_List_Runtime_Docker verifies --runtime docker includes Docker
 // containers and does not include a k8s section header.
 func TestCmd_List_Runtime_Docker(t *testing.T) {
-	name := startAlpineContainer(t, uniqueName("ep-e2e-list-rt"))
+	const base = "ep-e2e-list-rt"
+	startAlpineContainer(t, uniqueName(base))
 
 	stdout, _, exitCode := runEP(t, tempHome(t), "list", "--runtime", "docker")
 
 	require.Equal(t, 0, exitCode)
-	assert.Contains(t, stdout, tablePrefix(name), "Docker container must appear with --runtime docker")
+	// DisplayName strips the timestamp suffix — assert on the base name.
+	assert.Contains(t, stdout, tablePrefix(base), "Docker container must appear with --runtime docker")
 }
 
 // ---------------------------------------------------------------------------
@@ -148,11 +153,13 @@ func TestCmd_List_Runtime_InvalidFlag(t *testing.T) {
 // TestCmd_List_Compact verifies --compact exits zero and produces shorter
 // output. The container name must still appear.
 func TestCmd_List_Compact(t *testing.T) {
-	name := startAlpineContainer(t, uniqueName("ep-e2e-list-compact"))
+	const base = "ep-e2e-list-compact"
+	startAlpineContainer(t, uniqueName(base))
 
 	stdoutCompact, _, exitCode := runEP(t, tempHome(t), "list", "--compact")
 	require.Equal(t, 0, exitCode, "--compact must exit 0")
-	assert.Contains(t, stdoutCompact, tablePrefix(name))
+	// DisplayName strips the timestamp suffix — assert on the base name.
+	assert.Contains(t, stdoutCompact, tablePrefix(base))
 
 	stdoutFull, _, _ := runEP(t, tempHome(t), "list")
 	// Compact output must be no longer than (or equal to) full output since
