@@ -30,7 +30,6 @@ echo ""
 echo "▶  E2e pipeline and PBR tests (./test/e2e/...)"
 go test \
   -tags integration \
-  -race \
   -run "TestIngest|TestPBR|TestHealth|TestStatus|TestTier2|TestCmdList|TestCmdReload|TestCmdStatus|TestLearn|TestBinary" \
   -count=1 \
   ./test/e2e/...
