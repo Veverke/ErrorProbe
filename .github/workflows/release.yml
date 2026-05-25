@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  # ── Tier 1: Build one binary per platform ──────────────────────────────────
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            binary: errorprobe-windows-amd64.exe
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            binary: errorprobe-linux-amd64
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
+            binary: errorprobe-linux-arm64
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+            binary: errorprobe-darwin-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set build metadata
+        shell: bash
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          echo "COMMIT=${GITHUB_SHA:0:7}"      >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build \
+            -ldflags "-s -w \
+              -X github.com/errorprobe/errorprobe/cmd.Version=${VERSION} \
+              -X github.com/errorprobe/errorprobe/cmd.Commit=${COMMIT} \
+              -X github.com/errorprobe/errorprobe/cmd.BuildDate=${BUILD_DATE}" \
+            -o ${{ matrix.binary }} \
+            ./cmd/errorprobe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: ${{ matrix.binary }}
+
+  # ── Tier 2: Collect artifacts, generate checksums, sign, publish release ───
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create GitHub Release
+      id-token: write   # cosign keyless signing via GitHub OIDC
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: sha256sum errorprobe-* > checksums.txt
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign checksums (keyless via GitHub OIDC)
+        run: cosign sign-blob --yes checksums.txt --bundle checksums.txt.sig
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            errorprobe-windows-amd64.exe
+            errorprobe-linux-amd64
+            errorprobe-linux-arm64
+            errorprobe-darwin-arm64
+            checksums.txt
+            checksums.txt.sig
+
+  # ── TD.6: Submit winget manifest via wingetcreate ─────────────────────────
+  update-winget:
+    needs: release
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install wingetcreate and submit manifest
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          winget install --id Microsoft.WingetCreate --silent --accept-source-agreements --accept-package-agreements
+          wingetcreate submit `
+            --token $env:WINGET_TOKEN `
+            https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/errorprobe-windows-amd64.exe
+
+  # ── TD.8: Update Homebrew formula in Formula/errorprobe.rb ────────────────
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit Formula/errorprobe.rb back to this repo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Formula/errorprobe.rb
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE_URL="https://github.com/Veverke/ErrorProbe/releases/download/${GITHUB_REF_NAME}"
+
+          curl -fsSL "${BASE_URL}/checksums.txt" -o checksums.txt
+          SHA_DARWIN=$(grep "errorprobe-darwin-arm64" checksums.txt | awk '{print $1}')
+
+          sed -i "s|version \".*\"|version \"${VERSION}\"|"             Formula/errorprobe.rb
+          sed -i "s|url \".*\"|url \"${BASE_URL}/errorprobe-darwin-arm64\"|" Formula/errorprobe.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA_DARWIN}\"|"            Formula/errorprobe.rb
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/errorprobe.rb
+          git commit -m "chore: bump Homebrew formula to ${VERSION}"
+          git push
