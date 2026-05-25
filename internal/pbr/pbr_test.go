@@ -281,6 +281,60 @@ func TestEvaluate_AllConditionsMustMatch(t *testing.T) {
 	assert.Equal(t, "FAILING", Evaluate(rules, logCtxFull("error", "", "", "", "", 5, time.Minute)).State)
 }
 
+func TestEvaluate_MatchedPattern_LevelOnly(t *testing.T) {
+	// Level-only rule has no message condition → MatchedPattern must be empty.
+	rules := []Rule{
+		{Name: "r", Priority: 100, Match: MatchLog, SetState: "HAS_ERRORS",
+			Conditions: []Condition{cond("level", OpEq, "error")}},
+	}
+	result := Evaluate(rules, logCtx("error", "connection refused"))
+	assert.Equal(t, "HAS_ERRORS", result.State)
+	assert.Equal(t, "", result.MatchedPattern)
+}
+
+func TestEvaluate_MatchedPattern_Eq(t *testing.T) {
+	// Rule with an exact-match message condition → MatchedPattern is the condition value.
+	rules := []Rule{
+		{Name: "r", Priority: 100, Match: MatchLog, SetState: "HAS_ERRORS",
+			Conditions: []Condition{
+				cond("level", OpEq, "error"),
+				cond("message", OpEq, "connection refused"),
+			}},
+	}
+	result := Evaluate(rules, logCtx("error", "connection refused"))
+	assert.Equal(t, "HAS_ERRORS", result.State)
+	assert.Equal(t, "connection refused", result.MatchedPattern)
+}
+
+func TestEvaluate_MatchedPattern_Regex(t *testing.T) {
+	// Rule with a regex message condition → MatchedPattern is the matched substring.
+	re := regexp.MustCompile(`timeout|refused`)
+	rules := []Rule{
+		{Name: "r", Priority: 100, Match: MatchLog, SetState: "HAS_ERRORS",
+			Conditions: []Condition{
+				cond("level", OpEq, "error"),
+				{Field: "message", Operator: OpRegex, Value: `timeout|refused`, CompiledRegex: re},
+			}},
+	}
+	result := Evaluate(rules, logCtx("error", "dial tcp: connection refused after 30s"))
+	assert.Equal(t, "HAS_ERRORS", result.State)
+	assert.Equal(t, "refused", result.MatchedPattern)
+}
+
+func TestEvaluate_MatchedPattern_Glob(t *testing.T) {
+	// Rule with a glob message condition → MatchedPattern is the glob pattern itself.
+	rules := []Rule{
+		{Name: "r", Priority: 100, Match: MatchLog, SetState: "HAS_ERRORS",
+			Conditions: []Condition{
+				cond("level", OpEq, "error"),
+				cond("message", OpGlob, "*refused*"),
+			}},
+	}
+	result := Evaluate(rules, logCtx("error", "connection refused"))
+	assert.Equal(t, "HAS_ERRORS", result.State)
+	assert.Equal(t, "*refused*", result.MatchedPattern)
+}
+
 // ─── Load ────────────────────────────────────────────────────────────────────
 
 func ruleConfig(name string, priority int, match, state string, when map[string]string) config.RuleConfig {
