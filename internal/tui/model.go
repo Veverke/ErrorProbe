@@ -702,18 +702,18 @@ func (m Model) buildExpandedLines(
 	switch ch.State {
 	case health.StateHasWarnings:
 		if ch.LastErrorMsg != "" {
-			summary = fmt.Sprintf("!  last warning (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+			summary = fmt.Sprintf("⚠  last warning (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
 		} else {
-			summary = fmt.Sprintf("!  has warnings (%d total, no message)", ch.ErrorCount)
+			summary = fmt.Sprintf("⚠  has warnings (%d total, no message)", ch.ErrorCount)
 		}
 		if prevExit != "" {
 			summary += "  │  prev exit: " + prevExit
 		}
 	case health.StateHasErrors:
 		if ch.LastErrorMsg != "" {
-			summary = fmt.Sprintf("⚠  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
+			summary = fmt.Sprintf("✗  last error (%d total): %s", ch.ErrorCount, ch.LastErrorMsg)
 		} else {
-			summary = fmt.Sprintf("⚠  has errors (%d total, no message)", ch.ErrorCount)
+			summary = fmt.Sprintf("✗  has errors (%d total, no message)", ch.ErrorCount)
 		}
 		if prevExit != "" {
 			summary += "  │  prev exit: " + prevExit
@@ -748,7 +748,53 @@ func (m Model) buildExpandedLines(
 			summary = fmt.Sprintf("✓  no errors recorded  infra: %s", infra)
 		}
 	}
+
+	// Determine per-state icon style (applied to the leading icon character).
+	var iconStyle lipgloss.Style
+	switch ch.State {
+	case health.StateHasWarnings:
+		iconStyle = warnStyle.Bold(true)
+	case health.StateHasErrors:
+		iconStyle = failStyle.Bold(true)
+	case health.StateFailing:
+		iconStyle = failStyle.Bold(true)
+	default:
+		switch infra {
+		case "restarting":
+			iconStyle = errStyle.Bold(true)
+		case "failed", "error", "crashed", "terminating":
+			iconStyle = failStyle.Bold(true)
+		default:
+			iconStyle = okStyle
+		}
+	}
+
+	// Determine what to highlight inline. Use the rule-matched pattern when
+	// available; fall back to the first recognisable error keyword in the
+	// message so built-in level-only rules (which have no message condition)
+	// still produce a visible highlight.
+	hlPat := ch.MatchedPattern
+	if hlPat == "" && ch.LastErrorMsg != "" {
+		lower := strings.ToLower(ch.LastErrorMsg)
+		for _, kw := range []string{
+			"exception", "panic", "fatal", "nil pointer", "segfault",
+			"out of memory", "oom", "refused", "timeout", "timed out",
+			"denied", "unauthorized", "forbidden", "failed", "failure",
+			"error",
+		} {
+			if idx := strings.Index(lower, kw); idx >= 0 {
+				hlPat = ch.LastErrorMsg[idx : idx+len(kw)]
+				break
+			}
+		}
+	}
+
+	// Scroll-arrow style: bold + bright so the user knows content continues offscreen.
+	arrowStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+
 	// Render summary with horizontal scroll (◀ ▶ when content overflows).
+	// The leading icon gets a severity-appropriate colour; the matched/fallback
+	// pattern is highlighted with bold+reverse video inside the plain body text.
 	{
 		summaryRunes := []rune(summary)
 		totalLen := len(summaryRunes)
@@ -769,24 +815,45 @@ func (m Model) buildExpandedLines(
 			end = totalLen
 		}
 		visible := string(summaryRunes[hOff:end])
-		pad := viewW - lipgloss.Width(visible)
+
+		// Split icon prefix (e.g. "✗  ") from the body so we can colour them
+		// independently. The icon is only present when not scrolled past it.
+		visRunes := []rune(visible)
+		iconEnd := 0
+		if len(visRunes) > 0 {
+			switch visRunes[0] {
+			case '⚠', '✗', '!', '✓':
+				iconEnd = 1
+				for iconEnd < len(visRunes) && visRunes[iconEnd] == ' ' {
+					iconEnd++
+				}
+			}
+		}
+		renderedVisible := iconStyle.Render(string(visRunes[:iconEnd])) +
+			highlightPatternInText(string(visRunes[iconEnd:]), hlPat, detailStyle)
+
+		pad := viewW - lipgloss.Width(renderedVisible)
 		if pad < 0 {
 			pad = 0
 		}
 		var summaryLine string
 		if !hasMore {
-			summaryLine = " " + visible + strings.Repeat(" ", pad)
+			summaryLine = detailStyle.Render(" ") + renderedVisible + strings.Repeat(" ", pad)
 		} else {
-			leftArr, rightArr := " ", " "
+			var leftRendered, rightRendered string
 			if hOff > 0 {
-				leftArr = "◀"
+				leftRendered = arrowStyle.Render("◀")
+			} else {
+				leftRendered = " "
 			}
 			if end < totalLen {
-				rightArr = "▶"
+				rightRendered = arrowStyle.Render("▶")
+			} else {
+				rightRendered = " "
 			}
-			summaryLine = " " + leftArr + visible + strings.Repeat(" ", pad) + rightArr
+			summaryLine = detailStyle.Render(" ") + leftRendered + renderedVisible + strings.Repeat(" ", pad) + rightRendered
 		}
-		lines = append(lines, borderStyle.Render("│")+detailStyle.Render(summaryLine)+borderStyle.Render("│"))
+		lines = append(lines, borderStyle.Render("│")+summaryLine+borderStyle.Render("│"))
 	}
 
 	// --- Identity line (K8s only) ---
@@ -988,6 +1055,33 @@ func truncateRune(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// highlightPatternInText renders text with normal style, but bolds and reverses
+// (inverts fg/bg) any occurrence of pattern so it immediately pops against the
+// surrounding plain text. When pattern is empty or not found, the entire text is
+// rendered with normalStyle unchanged.
+func highlightPatternInText(text, pattern string, normalStyle lipgloss.Style) string {
+	if pattern == "" {
+		return normalStyle.Render(text)
+	}
+	idx := strings.Index(text, pattern)
+	if idx < 0 {
+		return normalStyle.Render(text)
+	}
+	hlStyle := lipgloss.NewStyle().Bold(true).Reverse(true)
+	before := text[:idx]
+	match := text[idx : idx+len(pattern)]
+	after := text[idx+len(pattern):]
+	out := ""
+	if before != "" {
+		out += normalStyle.Render(before)
+	}
+	out += hlStyle.Render(match)
+	if after != "" {
+		out += normalStyle.Render(after)
+	}
+	return out
 }
 
 // humanMsg extracts the most readable part of a log message for inline display.

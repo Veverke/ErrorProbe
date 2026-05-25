@@ -80,6 +80,11 @@ type EvalContext struct {
 // EvalResult is the output of one evaluation pass.
 // When MatchedRule is empty no rule matched and the caller applies its default.
 type EvalResult struct {
-	State       string
-	MatchedRule string
+	State          string
+	MatchedRule    string
+	// MatchedPattern is the literal text from the log message that satisfied the
+	// first "message" condition of the matched rule. For regex operators it is the
+	// actual matched substring; for eq operators it is the condition value itself.
+	// Empty when no message condition exists (e.g. level-only built-in rules).
+	MatchedPattern string
 }

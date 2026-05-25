@@ -10,10 +10,46 @@ func Evaluate(rules []Rule, ctx EvalContext) EvalResult {
 			continue
 		}
 		if allConditionsMatch(r.Conditions, ctx) {
-			return EvalResult{State: r.SetState, MatchedRule: r.Name}
+			return EvalResult{
+				State:          r.SetState,
+				MatchedRule:    r.Name,
+				MatchedPattern: messageMatchedText(r, ctx),
+			}
 		}
 	}
 	return EvalResult{}
+}
+
+// messageMatchedText returns the specific substring of the log message that
+// satisfied the first "message" condition in the matched rule.
+// For regex operators it returns the actual matched text via FindString;
+// for eq operators it returns the condition value itself.
+// Returns "" when no message condition is present (e.g. level-only rules).
+func messageMatchedText(r Rule, ctx EvalContext) string {
+	if ctx.Log == nil {
+		return ""
+	}
+	msg := ctx.Log.Event.Message
+	for _, c := range r.Conditions {
+		if c.Field != "message" {
+			continue
+		}
+		switch c.Operator {
+		case OpEq:
+			return c.Value
+		case OpRegex:
+			if c.CompiledRegex != nil {
+				if m := c.CompiledRegex.FindString(msg); m != "" {
+					return m
+				}
+			}
+		case OpGlob:
+			// Glob patterns can't easily yield a matched substring;
+			// return the pattern value as a hint.
+			return c.Value
+		}
+	}
+	return ""
 }
 
 // contextMatchesPlane returns true when the rule's match plane matches the
