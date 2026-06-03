@@ -1,6 +1,7 @@
 # ErrorProbe
 
 [![CI](https://github.com/Veverke/ErrorProbe/actions/workflows/ci.yml/badge.svg)](https://github.com/Veverke/ErrorProbe/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/errorprobe/errorprobe/branch/main/graph/badge.svg)](https://codecov.io/gh/errorprobe/errorprobe)
 [![Release](https://img.shields.io/github/v/release/Veverke/ErrorProbe)](https://github.com/Veverke/ErrorProbe/releases/latest)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Veverke/ErrorProbe)](https://goreportcard.com/report/github.com/Veverke/ErrorProbe)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Veverke/ErrorProbe)](go.mod)
