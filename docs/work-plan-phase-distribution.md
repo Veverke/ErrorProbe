@@ -16,7 +16,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 
 ### Tier 1 — Build pipeline (no Phase D dependencies beyond Phase 4)
 
-#### TD.1 — Implement `errorprobe version` command
+#### TD.1 — ✅ Implement `errorprobe version` command`
 - Replace any version stub in `cmd/root.go`
 - `--version` flag and `version` subcommand both print:
   ```
@@ -30,7 +30,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
   ```
 - `cmd.Version`, `cmd.Commit`, `cmd.BuildDate` are package-level vars in `cmd/version.go`
 
-#### TD.2 — Implement GitHub Actions build workflow
+#### TD.2 — ✅ Implement GitHub Actions build workflow
 - File: `.github/workflows/release.yml`
 - Trigger: `push` to tags matching `v*.*.*`
 - Build matrix:
@@ -45,7 +45,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 - Produces stripped binaries (`-ldflags "-s -w"`) for smaller size
 - Upload all binaries as GitHub Release assets
 
-#### TD.3 — Implement checksum and signature generation
+#### TD.3 — ✅ Implement checksum and signature generation
 - After all binaries built: generate `checksums.txt` with SHA-256 of each binary
 - Sign `checksums.txt` with `cosign` (keyless signing via GitHub OIDC) — produces `checksums.txt.sig`
 - Upload `checksums.txt` and `checksums.txt.sig` as Release assets
@@ -55,7 +55,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 
 ### Tier 2 — Install scripts (depends on TD.2)
 
-#### TD.4 — Implement PowerShell install script (`install.ps1`)
+#### TD.4 — ✅ Implement PowerShell install script (`install.ps1`)
 - Detects OS architecture (`$env:PROCESSOR_ARCHITECTURE`)
 - Fetches latest release tag from GitHub API: `https://api.github.com/repos/errorprobe/errorprobe/releases/latest`
 - Downloads correct binary to temp path
@@ -66,13 +66,13 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 - Hosted at a stable URL: `https://raw.githubusercontent.com/errorprobe/errorprobe/main/install.ps1`
 - Usage: `irm https://raw.githubusercontent.com/errorprobe/errorprobe/main/install.ps1 | iex`
 
-#### TD.5 — Implement shell install script (`install.sh`)
+#### TD.5 — ✅ Implement shell install script (`install.sh`)
 - Detects OS (`uname -s`) and arch (`uname -m`)
 - Same flow as TD.4: fetch latest release, download, verify checksum, install to `/usr/local/bin`
 - Fallback install path: `~/.local/bin` if `/usr/local/bin` not writable (no `sudo` prompt)
 - Usage: `curl -fsSL https://raw.githubusercontent.com/errorprobe/errorprobe/main/install.sh | sh`
 
-#### TD.4.5 — Implement `errorprobe upgrade` (binary self-update)
+#### TD.4.5 — ✅ Implement `errorprobe upgrade` (binary self-update)
 - New file: `cmd/upgrade.go`; register in `cmd/root.go` alongside other subcommands
 - Note: `cmd/update.go` already exists for stack image updates — this is a separate command
 - Behaviour:
@@ -94,7 +94,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 - No external dependencies: use only stdlib (`net/http`, `crypto/sha256`, `os`, `runtime`)
 - Depends on: TD.1 (version), TD.2 (GitHub Release assets), TD.3 (checksums.txt)
 
-#### TD.5.5 — Implement GitHub Action (`setup-errorprobe`)
+#### TD.5.5 — ✅ Implement GitHub Action (`setup-errorprobe`)
 - Create a new public repository `Veverke/setup-errorprobe` (a GitHub Action)
 - `action.yml` with `inputs.version` (default: `latest`)
 - Action steps:
@@ -114,7 +114,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 
 ### Tier 3 — Package managers (depends on TD.2, TD.3; independent of each other)
 
-#### TD.6 — Submit `winget` package
+#### TD.6 — ✅ Submit `winget` package (automation implemented; first-time PR to microsoft/winget-pkgs requires manual submission — see distribution guide)
 - **No template files or separate repo required.** Use `wingetcreate` which generates all 3 manifests from the binary URL automatically.
 - Requires: GitHub repo is **public** and the `WINGET_TOKEN` secret (PAT with `public_repo` scope) is set in repo settings
 - Automated in `release.yml` `update-winget` job:
@@ -127,10 +127,10 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 - Usage once PR is merged: `winget install ErrorProbe.ErrorProbe`
 - **Manual approval still required** by Microsoft's winget-pkgs reviewers
 
-#### TD.7 — ~~`scoop` bucket~~ — **dropped**
+#### TD.7 — ✅ ~~`scoop` bucket~~ — **dropped**
 - Redundant given winget covers all Windows users; no separate repo needed
 
-#### TD.8 — Homebrew formula (macOS — self-hosted in this repo)
+#### TD.8 — ✅ Homebrew formula (macOS — self-hosted in this repo)
 - Formula lives at `Formula/errorprobe.rb` **in this repo** (no separate tap repo needed)
 - `release.yml` `update-homebrew` job updates version + SHA-256 and commits directly to this repo on every release tag
 - Usage:
@@ -144,7 +144,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 
 ### Tier 4 — Release automation (depends on TD.2, TD.6, TD.8)
 
-#### TD.9 — Automate package manifest updates on release
+#### TD.9 — ✅ Automate package manifest updates on release
 - Both update steps are jobs inside `.github/workflows/release.yml` (no separate workflow file)
 - **`update-winget` job** (runs on `windows-latest` after the `release` job):
   - Installs `wingetcreate` via winget, then calls `wingetcreate submit --token $WINGET_TOKEN <binary-url>`
@@ -160,7 +160,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 
 ### Tier 5 — Unit / integration tests for install scripts
 
-#### TD.10 — Test install scripts on clean environments
+#### TD.10 — ❌ Test install scripts on clean environments (not yet done — manual steps required before public release)
 - **Manual test on clean Windows VM** (no errorprobe previously installed):
   1. Run `irm <url> | iex`
   2. Open new terminal; run `errorprobe --version`; confirm correct version printed
@@ -177,7 +177,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 
 ### Final Task
 
-#### TD.11 — Mark phase complete in work-plan.md
+#### TD.11 — ❌ Mark phase complete in work-plan.md (pending TD.10)
 - Open `docs/work-plan.md`
 - Mark all Distribution tasks as `[x]`
 - Add completion date next to phase heading
