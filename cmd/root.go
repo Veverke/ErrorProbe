@@ -18,9 +18,6 @@ var (
 	logFmt    string
 )
 
-// Version is injected at build time via -ldflags.
-var Version = "dev"
-
 var rootCmd = &cobra.Command{
 	Use:          "errorprobe",
 	Short:        "Real-time error detection for Docker containers",
@@ -81,7 +78,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "path to config file (default: ./errorprobe.yaml or ~/.errorprobe/config.yaml)")
 	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "enable verbose debug logging")
 	rootCmd.PersistentFlags().StringVar(&logFmt, "log-format", "text", "log output format: text or json")
+	rootCmd.Version = versionString()
 	rootCmd.SetVersionTemplate("errorprobe {{.Version}}\n")
+	cleanupUpgradeArtifacts()
 
 	rootCmd.AddCommand(
 		upCmd,
@@ -94,6 +93,8 @@ func init() {
 		watchCmd,
 		logsCmd,
 		checkCmd,
+		versionCmd,
+		upgradeCmd,
 	)
 }
 

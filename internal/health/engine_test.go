@@ -222,3 +222,48 @@ func TestEngine_SetWatchedKeys_EmptySetBlocksAll(t *testing.T) {
 	e.ProcessBatch([]ingest.LogEvent{errEvent("api", "boom")})
 	assert.Empty(t, e.Snapshot().Containers, "empty watch set should block all events")
 }
+
+// TestEngine_ProcessBatch_MatchedPattern_ErrorRule verifies that when a rule
+// with a "message" eq condition fires, MatchedPattern is stored in the snapshot.
+func TestEngine_ProcessBatch_MatchedPattern_ErrorRule(t *testing.T) {
+	dir := t.TempDir()
+	rules, err := pbr.Load([]config.RuleConfig{
+		{Name: "msg-rule", Priority: 200, Match: "log",
+			When:     map[string]string{"level": "error", "message": "connection refused"},
+			SetState: "HAS_ERRORS"},
+	}, nil, pbr.BuiltinRules())
+	require.NoError(t, err)
+
+	e := NewEngine(filepath.Join(dir, "health.json"), rules, nil)
+	e.ProcessBatch([]ingest.LogEvent{errEvent("svc", "connection refused")})
+
+	ch := e.Snapshot().Containers["svc"]
+	assert.Equal(t, StateHasErrors, ch.State)
+	assert.Equal(t, "msg-rule", ch.MatchedRule)
+	assert.Equal(t, "connection refused", ch.MatchedPattern)
+}
+
+// TestEngine_ProcessBatch_MatchedPattern_WarnRule verifies the same for the
+// HAS_WARNINGS code path in ProcessBatch.
+func TestEngine_ProcessBatch_MatchedPattern_WarnRule(t *testing.T) {
+	dir := t.TempDir()
+	// HAS_WARNINGS is only produced by built-in rules and cannot be declared via
+	// pbr.Load (it's not in the validator's allowed set). Construct the rule
+	// directly so we can attach a message condition and verify MatchedPattern.
+	rules := []pbr.Rule{
+		{Name: "warn-msg-rule", Priority: 200, Match: pbr.MatchLog,
+			Conditions: []pbr.Condition{
+				{Field: "level", Operator: pbr.OpEq, Value: "warn"},
+				{Field: "message", Operator: pbr.OpEq, Value: "slow query"},
+			},
+			SetState: "HAS_WARNINGS"},
+	}
+
+	e := NewEngine(filepath.Join(dir, "health.json"), rules, nil)
+	e.ProcessBatch([]ingest.LogEvent{warnEvent("db", "slow query")})
+
+	ch := e.Snapshot().Containers["db"]
+	assert.Equal(t, StateHasWarnings, ch.State)
+	assert.Equal(t, "warn-msg-rule", ch.MatchedRule)
+	assert.Equal(t, "slow query", ch.MatchedPattern)
+}

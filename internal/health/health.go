@@ -48,6 +48,7 @@ type ContainerHealth struct {
 	DominantFingerprint      string         `json:"dominant_fingerprint,omitempty"`        // set when FAILING
 	DominantFingerprintCount int            `json:"dominant_fingerprint_count,omitempty"`  // count when FAILING
 	MatchedRule              string         `json:"matched_rule,omitempty"`                // PBR rule name that last set the state
+	MatchedPattern          string         `json:"matched_pattern,omitempty"`             // literal text in the message that triggered MatchedRule
 }
 
 // HealthSnapshot is an immutable-by-convention snapshot of all container health states.
@@ -178,6 +179,7 @@ func (s *HealthSnapshot) Reset(name string) {
 	ch.DominantFingerprint = ""
 	ch.DominantFingerprintCount = 0
 	ch.MatchedRule = ""
+	ch.MatchedPattern = ""
 	ch.LastUpdated = time.Now()
 	s.Containers[name] = ch
 }

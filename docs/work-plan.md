@@ -238,18 +238,22 @@ detection:
 
 ---
 
-## Distribution (Parallel Track — starts after Phase 4)
+## Distribution (Parallel Track — starts after Phase 4) *(in progress)*
 
 **Goal:** Zero-friction installation matching the zero-config runtime promise.
 
 ### Tasks
-- [ ] GitHub Actions: build Windows (amd64), Linux (amd64, arm64), macOS (arm64) binaries on tag push; upload as GitHub Release assets
-- [ ] Install script (`install.sh` / `install.ps1`): detect OS and arch, download correct binary from GitHub Releases, place in `$PATH` or prompt user
-- [ ] Checksums and signature verification in install script
-- [ ] `winget` package submission (Windows-first)
-- [ ] `scoop` bucket (Windows alternative)
-- [ ] `brew` formula (macOS — post Windows validation)
-- [ ] `errorprobe version` command: print version, build commit, build date
+- [x] GitHub Actions: build Windows (amd64), Linux (amd64, arm64), macOS (arm64) binaries on tag push; upload as GitHub Release assets
+- [x] Install script (`install.sh` / `install.ps1`): detect OS and arch, download correct binary from GitHub Releases, place in `$PATH` or prompt user
+- [x] Checksums and signature verification in install script
+- [x] `winget` package submission (Windows-first)
+- [x] `brew` formula (macOS — post Windows validation)
+- [x] `errorprobe version` command: print version, build commit, build date
+- [x] `errorprobe upgrade` command: self-update binary with checksum verification and atomic replace
+- [x] GitHub Action (`setup-errorprobe`): CI-friendly install via `uses: Veverke/ErrorProbe/setup-action@<tag>`
+- [x] Release automation: workflow opens PR to winget-pkgs and updates brew formula on each tag push
+- [ ] Test install scripts on clean environments (TD.10 — manual steps required before public release)
+- [ ] Mark phase complete (TD.11 — pending TD.10)
 
 ---
 

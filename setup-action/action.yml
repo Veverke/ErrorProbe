@@ -1,0 +1,101 @@
+name: Setup ErrorProbe
+description: >
+  Download, verify, and install the errorprobe binary on the current GitHub
+  Actions runner. Adds the binary to GITHUB_PATH so it is available in all
+  subsequent steps.
+
+  This action lives in the main ErrorProbe repository and can be referenced
+  directly using the subdirectory syntax:
+
+    uses: Veverke/ErrorProbe/setup-action@<tag>
+
+  A separate Veverke/setup-errorprobe repository is optional (provides the
+  cleaner "uses: Veverke/setup-errorprobe@v1" syntax). See
+  docs/distribution-guide.md for the tradeoffs.
+
+inputs:
+  version:
+    description: >
+      The version to install, e.g. "v1.2.0" or "latest" (default).
+      "latest" resolves to the most recent GitHub Release tag.
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve version
+      id: resolve
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          VERSION=$(curl -fsSL \
+            -H "User-Agent: setup-errorprobe" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Veverke/ErrorProbe/releases/latest" \
+            | grep '"tag_name"' \
+            | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        else
+          VERSION="${{ inputs.version }}"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Download, verify, and install
+      shell: bash
+      run: |
+        VERSION="${{ steps.resolve.outputs.version }}"
+        BASE_URL="https://github.com/Veverke/ErrorProbe/releases/download/${VERSION}"
+
+        # Detect runner OS and architecture.
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        MACHINE=$(uname -m)
+
+        case "$OS" in
+          linux)              GOOS="linux"   ;;
+          darwin)             GOOS="darwin"  ;;
+          mingw*|msys*|cygwin*|windows_nt*) GOOS="windows" ;;
+          *)                  echo "Unsupported OS: $OS" >&2; exit 1 ;;
+        esac
+
+        case "$MACHINE" in
+          x86_64)        GOARCH="amd64" ;;
+          aarch64|arm64) GOARCH="arm64" ;;
+          *)             echo "Unsupported arch: $MACHINE" >&2; exit 1 ;;
+        esac
+
+        if [ "$GOOS" = "windows" ]; then
+          ASSET="errorprobe-windows-amd64.exe"
+          DEST="errorprobe.exe"
+        else
+          ASSET="errorprobe-${GOOS}-${GOARCH}"
+          DEST="errorprobe"
+        fi
+
+        # Download binary and checksums.
+        curl -fsSL "${BASE_URL}/${ASSET}"       -o "$DEST"
+        curl -fsSL "${BASE_URL}/checksums.txt"  -o checksums.txt
+
+        # Verify SHA-256.
+        EXPECTED=$(grep "[[:space:]]${ASSET}$" checksums.txt | awk '{print $1}')
+        if [ -z "$EXPECTED" ]; then
+          echo "Hash for '$ASSET' not found in checksums.txt" >&2; exit 1
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+          ACTUAL=$(sha256sum "$DEST" | awk '{print $1}')
+        else
+          ACTUAL=$(shasum -a 256 "$DEST" | awk '{print $1}')
+        fi
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+          echo "Checksum FAILED. Expected $EXPECTED, got $ACTUAL" >&2; exit 1
+        fi
+
+        chmod +x "$DEST"
+        rm checksums.txt
+
+        # Add to PATH.
+        INSTALL_DIR="$PWD"
+        echo "$INSTALL_DIR" >> $GITHUB_PATH
+
+    - name: Confirm install
+      shell: bash
+      run: errorprobe --version
