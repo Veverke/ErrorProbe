@@ -16,7 +16,7 @@ Tasks are grouped by dependency tier. All tasks within a tier can be implemented
 
 ### Tier 1 — Build pipeline (no Phase D dependencies beyond Phase 4)
 
-#### TD.1 — ✅ Implement `errorprobe version` command`
+#### TD.1 — ✅ Implement `errorprobe version` command
 - Replace any version stub in `cmd/root.go`
 - `--version` flag and `version` subcommand both print:
   ```
@@ -208,10 +208,9 @@ Run after all tasks are complete on a clean Windows machine (no prior errorprobe
 2. **PATH persistence** — close and reopen terminal; `errorprobe --version` still works (PATH was persisted, not just set for current session).
 3. **Checksum verification** — tamper with downloaded binary byte; confirm install script rejects it with a clear error.
 4. **`winget install ErrorProbe.ErrorProbe`** — installs successfully; `errorprobe --version` works.
-5. **`scoop install errorprobe`** — installs successfully; `errorprobe --version` works.
-6. **`errorprobe upgrade` — already at latest** — run on a freshly installed binary matching the latest release; confirm `"already at the latest version"` is printed and exit code is 0.
-7. **`errorprobe upgrade` — older binary** — replace installed binary with a prior release build; run `errorprobe upgrade`; confirm correct platform binary downloaded, checksum verified, binary replaced; `errorprobe --version` prints new version.
-8. **`errorprobe upgrade` — Windows deferred rename** — after upgrade completes, confirm `errorprobe.exe.old` is present; run any `errorprobe` command; confirm `.old` file is cleaned up automatically.
-9. **`errorprobe upgrade` — no write permission (Linux)** — install to `/usr/local/bin` as root, then run `errorprobe upgrade` as an unprivileged user; confirm error message includes the path and suggests `sudo`.
-10. **GitHub Action install** — create a test workflow using `uses: Veverke/setup-errorprobe@v1`; confirm `errorprobe --version` works in a subsequent step on ubuntu-latest and windows-latest runners.
-11. **Release workflow** — push a `v1.0.1` tag; confirm GitHub Actions builds all 4 binaries; Release is created with all assets, `checksums.txt`, and `checksums.txt.sig`.
+5. **`errorprobe upgrade` — already at latest** — run on a freshly installed binary matching the latest release; confirm `"already at the latest version"` is printed and exit code is 0.
+6. **`errorprobe upgrade` — older binary** — replace installed binary with a prior release build; run `errorprobe upgrade`; confirm correct platform binary downloaded, checksum verified, binary replaced; `errorprobe --version` prints new version.
+7. **`errorprobe upgrade` — Windows deferred rename** — after upgrade completes, confirm `errorprobe.exe.old` is present; run any `errorprobe` command; confirm `.old` file is cleaned up automatically.
+8. **`errorprobe upgrade` — no write permission (Linux)** — install to `/usr/local/bin` as root, then run `errorprobe upgrade` as an unprivileged user; confirm error message includes the path and suggests `sudo`.
+9. **GitHub Action install** — create a test workflow using `uses: Veverke/setup-errorprobe@v1`; confirm `errorprobe --version` works in a subsequent step on ubuntu-latest and windows-latest runners.
+10. **Release workflow** — push a `v1.0.1` tag; confirm GitHub Actions builds all 4 binaries; Release is created with all assets, `checksums.txt`, and `checksums.txt.sig`.

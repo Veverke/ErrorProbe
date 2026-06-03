@@ -53,7 +53,7 @@ Fetches the latest release from GitHub, verifies the SHA-256 checksum, and atomi
 ### GitHub Actions
 
 ```yaml
-- uses: Veverke/setup-errorprobe@v1
+- uses: Veverke/ErrorProbe/setup-action@v1.0.0
 - run: errorprobe --version
 ```
 

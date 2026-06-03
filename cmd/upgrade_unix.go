@@ -12,10 +12,13 @@ import (
 // which is guaranteed because newPath was created in the same directory as execPath.
 func replaceExecutable(execPath, newPath string) error {
 	if err := os.Rename(newPath, execPath); err != nil {
-		return fmt.Errorf(
-			"upgrade requires write permission to %s; try: sudo errorprobe upgrade",
-			execPath,
-		)
+		if os.IsPermission(err) {
+			return fmt.Errorf(
+				"upgrade requires write permission to %s; try: sudo errorprobe upgrade",
+				execPath,
+			)
+		}
+		return fmt.Errorf("upgrade failed to replace %s: %w", execPath, err)
 	}
 	return nil
 }

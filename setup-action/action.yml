@@ -4,8 +4,14 @@ description: >
   Actions runner. Adds the binary to GITHUB_PATH so it is available in all
   subsequent steps.
 
-  Note: these files belong in the Veverke/setup-errorprobe repository.
-  See docs/work-plan-phase-distribution.md TD.5.5.
+  This action lives in the main ErrorProbe repository and can be referenced
+  directly using the subdirectory syntax:
+
+    uses: Veverke/ErrorProbe/setup-action@<tag>
+
+  A separate Veverke/setup-errorprobe repository is optional (provides the
+  cleaner "uses: Veverke/setup-errorprobe@v1" syntax). See
+  docs/distribution-guide.md for the tradeoffs.
 
 inputs:
   version:

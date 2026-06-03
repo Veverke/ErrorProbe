@@ -149,12 +149,8 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 				changed = true
 			}
 			if ch, ok := e.snapshot.Containers[key]; ok {
-				if result.MatchedRule != "" {
-					ch.MatchedRule = result.MatchedRule
-				}
-				if result.MatchedPattern != "" {
-					ch.MatchedPattern = result.MatchedPattern
-				}
+				ch.MatchedRule = result.MatchedRule
+				ch.MatchedPattern = result.MatchedPattern
 				e.snapshot.Containers[key] = ch
 			}
 		} else if state == "HAS_ERRORS" || state == "FAILING" {
@@ -176,12 +172,8 @@ func (e *Engine) ProcessBatch(events []ingest.LogEvent) {
 				if state == "FAILING" {
 					ch.State = StateFailing
 				}
-				if result.MatchedRule != "" {
-					ch.MatchedRule = result.MatchedRule
-				}
-				if result.MatchedPattern != "" {
-					ch.MatchedPattern = result.MatchedPattern
-				}
+				ch.MatchedRule = result.MatchedRule
+				ch.MatchedPattern = result.MatchedPattern
 				e.snapshot.Containers[key] = ch
 			}
 			if strings.EqualFold(ev.Level, "error") {
