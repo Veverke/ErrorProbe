@@ -129,15 +129,12 @@ jobs:
             exit 0
           }
 
-          $VERSION = "${{ github.ref_name }}".TrimStart('v')
           $INSTALLER_URL = "https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/errorprobe-windows-amd64.exe"
 
-          Write-Host "::group::Submit winget manifest (version: $VERSION)"
+          Write-Host "::group::Submit winget manifest"
           & $wc new `
             --token $env:WINGET_TOKEN `
-            --urls $INSTALLER_URL `
-            --version $VERSION `
-            --submit 2>&1
+            $INSTALLER_URL 2>&1
           $exitCode = $LASTEXITCODE
           Write-Host "::endgroup::"
 
