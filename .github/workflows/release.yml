@@ -143,11 +143,11 @@ jobs:
           $manifestDir = "$env:TEMP\manifests\Veverke.ErrorProbe\$VERSION"
           New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
 
-          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "PackageIdentifier: Veverke.ErrorProbe" -Encoding utf8NoBOM
-          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "PackageVersion: $VERSION" -Encoding utf8NoBOM
-          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "DefaultLocale: en-US" -Encoding utf8NoBOM
-          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "ManifestType: version" -Encoding utf8NoBOM
-          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "ManifestVersion: 1.6.0" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.version.yaml" -Value "PackageIdentifier: Veverke.ErrorProbe" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.version.yaml" -Value "PackageVersion: $VERSION" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.version.yaml" -Value "DefaultLocale: en-US" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.version.yaml" -Value "ManifestType: version" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.version.yaml" -Value "ManifestVersion: 1.6.0" -Encoding utf8NoBOM
 
           Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PackageIdentifier: Veverke.ErrorProbe" -Encoding utf8NoBOM
           Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PackageVersion: $VERSION" -Encoding utf8NoBOM
@@ -180,7 +180,7 @@ jobs:
           & $wc submit `
             --token $env:WINGET_TOKEN `
             --prtitle "ErrorProbe v$VERSION" `
-            "$manifestDir\Veverke.ErrorProbe.installer.yaml" 2>&1
+            "$manifestDir" 2>&1
           $exitCode = $LASTEXITCODE
           Write-Host "::endgroup::"
 
