@@ -133,7 +133,7 @@ jobs:
           $INSTALLER_URL = "https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/errorprobe-windows-amd64.exe"
 
           Write-Host "::group::Submit winget manifest (version: $VERSION)"
-          & $wc update `
+          & $wc new `
             --token $env:WINGET_TOKEN `
             --urls $INSTALLER_URL `
             --version $VERSION `
@@ -142,7 +142,7 @@ jobs:
           Write-Host "::endgroup::"
 
           if ($exitCode -ne 0) {
-            Write-Host "::warning::wingetcreate update exited with code $exitCode"
+            Write-Host "::warning::wingetcreate new exited with code $exitCode"
             throw "winget manifest submission failed"
           }
 
