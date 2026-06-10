@@ -129,17 +129,69 @@ jobs:
             exit 0
           }
 
+          $VERSION = "${{ github.ref_name }}".TrimStart('v')
           $INSTALLER_URL = "https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/errorprobe-windows-amd64.exe"
+          $CHECKSUMS_URL = "https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/checksums.txt"
+
+          Write-Host "::group::Download installer and compute SHA256"
+          $installerPath = "$env:TEMP\errorprobe-windows-amd64.exe"
+          Invoke-WebRequest -Uri $INSTALLER_URL -OutFile $installerPath -UseBasicParsing
+          $SHA256 = (Get-FileHash $installerPath -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA256: $SHA256"
+          Write-Host "::endgroup::"
+
+          Write-Host "::group::Create winget manifest"
+          $manifestDir = "$env:TEMP\manifests\Veverke.ErrorProbe\$VERSION"
+          New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+
+          @"
+          PackageIdentifier: Veverke.ErrorProbe
+          PackageVersion: $VERSION
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.6.0
+          "@ | Out-File -FilePath "$manifestDir\Veverke.ErrorProbe.yaml" -Encoding utf8
+
+          @"
+          PackageIdentifier: Veverke.ErrorProbe
+          PackageVersion: $VERSION
+          PackageLocale: en-US
+          Publisher: Veverke
+          PublisherUrl: https://github.com/Veverke
+          PublisherSupportUrl: https://github.com/Veverke/ErrorProbe/issues
+          PackageName: ErrorProbe
+          PackageUrl: https://github.com/Veverke/ErrorProbe
+          License: MIT
+          ShortDescription: Real-time error detection for Docker containers and Kubernetes pods
+          ManifestType: locale
+          ManifestVersion: 1.6.0
+          "@ | Out-File -FilePath "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Encoding utf8
+
+          @"
+          PackageIdentifier: Veverke.ErrorProbe
+          PackageVersion: $VERSION
+          Installers:
+          - Architecture: x64
+            InstallerType: portable
+            InstallerUrl: $INSTALLER_URL
+            InstallerSha256: $SHA256
+          ManifestType: installer
+          ManifestVersion: 1.6.0
+          "@ | Out-File -FilePath "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Encoding utf8
+
+          Write-Host "Manifest files created in $manifestDir"
+          Get-ChildItem $manifestDir
+          Write-Host "::endgroup::"
 
           Write-Host "::group::Submit winget manifest"
-          & $wc new `
+          & $wc submit `
             --token $env:WINGET_TOKEN `
-            $INSTALLER_URL 2>&1
+            $manifestDir 2>&1
           $exitCode = $LASTEXITCODE
           Write-Host "::endgroup::"
 
           if ($exitCode -ne 0) {
-            Write-Host "::warning::wingetcreate new exited with code $exitCode"
+            Write-Host "::warning::wingetcreate submit exited with code $exitCode"
             throw "winget manifest submission failed"
           }
 
