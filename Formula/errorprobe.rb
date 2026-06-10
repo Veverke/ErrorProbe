@@ -9,7 +9,7 @@ class Errorprobe < Formula
       # version, url, and sha256 are updated automatically by the
       # release workflow on every tag push.
       url "https://github.com/Veverke/ErrorProbe/releases/download/v1.0.0/errorprobe-darwin-arm64"
-      sha256 "0ec5272f742ad43f0a7d2269108b668bd20cb8502b22dcb88bf4eaa9104d1ffb"
+      sha256 "f002da215155f3664fc70141d3bd9e5de50a58fb54dca6ec20878240a0c51ac7"
     end
   end
 
