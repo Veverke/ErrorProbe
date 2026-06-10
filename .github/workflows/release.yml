@@ -131,7 +131,6 @@ jobs:
 
           $VERSION = "${{ github.ref_name }}".TrimStart('v')
           $INSTALLER_URL = "https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/errorprobe-windows-amd64.exe"
-          $CHECKSUMS_URL = "https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/checksums.txt"
 
           Write-Host "::group::Download installer and compute SHA256"
           $installerPath = "$env:TEMP\errorprobe-windows-amd64.exe"
@@ -144,40 +143,34 @@ jobs:
           $manifestDir = "$env:TEMP\manifests\Veverke.ErrorProbe\$VERSION"
           New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
 
-          @"
-          PackageIdentifier: Veverke.ErrorProbe
-          PackageVersion: $VERSION
-          DefaultLocale: en-US
-          ManifestType: version
-          ManifestVersion: 1.6.0
-          "@ | Out-File -FilePath "$manifestDir\Veverke.ErrorProbe.yaml" -Encoding utf8
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "PackageIdentifier: Veverke.ErrorProbe" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "PackageVersion: $VERSION" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "DefaultLocale: en-US" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "ManifestType: version" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.yaml" -Value "ManifestVersion: 1.6.0" -Encoding utf8NoBOM
 
-          @"
-          PackageIdentifier: Veverke.ErrorProbe
-          PackageVersion: $VERSION
-          PackageLocale: en-US
-          Publisher: Veverke
-          PublisherUrl: https://github.com/Veverke
-          PublisherSupportUrl: https://github.com/Veverke/ErrorProbe/issues
-          PackageName: ErrorProbe
-          PackageUrl: https://github.com/Veverke/ErrorProbe
-          License: MIT
-          ShortDescription: Real-time error detection for Docker containers and Kubernetes pods
-          ManifestType: locale
-          ManifestVersion: 1.6.0
-          "@ | Out-File -FilePath "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Encoding utf8
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PackageIdentifier: Veverke.ErrorProbe" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PackageVersion: $VERSION" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PackageLocale: en-US" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "Publisher: Veverke" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PublisherUrl: https://github.com/Veverke" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PublisherSupportUrl: https://github.com/Veverke/ErrorProbe/issues" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PackageName: ErrorProbe" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "PackageUrl: https://github.com/Veverke/ErrorProbe" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "License: MIT" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "ShortDescription: Real-time error detection for Docker containers and Kubernetes pods" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "ManifestType: defaultLocale" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.locale.en-US.yaml" -Value "ManifestVersion: 1.6.0" -Encoding utf8NoBOM
 
-          @"
-          PackageIdentifier: Veverke.ErrorProbe
-          PackageVersion: $VERSION
-          Installers:
-          - Architecture: x64
-            InstallerType: portable
-            InstallerUrl: $INSTALLER_URL
-            InstallerSha256: $SHA256
-          ManifestType: installer
-          ManifestVersion: 1.6.0
-          "@ | Out-File -FilePath "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Encoding utf8
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "PackageIdentifier: Veverke.ErrorProbe" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "PackageVersion: $VERSION" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "Installers:" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "- Architecture: x64" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "  InstallerType: portable" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "  InstallerUrl: $INSTALLER_URL" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "  InstallerSha256: $SHA256" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "ManifestType: installer" -Encoding utf8NoBOM
+          Add-Content -Path "$manifestDir\Veverke.ErrorProbe.installer.yaml" -Value "ManifestVersion: 1.6.0" -Encoding utf8NoBOM
 
           Write-Host "Manifest files created in $manifestDir"
           Get-ChildItem $manifestDir
@@ -186,7 +179,8 @@ jobs:
           Write-Host "::group::Submit winget manifest"
           & $wc submit `
             --token $env:WINGET_TOKEN `
-            $manifestDir 2>&1
+            --prtitle "ErrorProbe v$VERSION" `
+            "$manifestDir\Veverke.ErrorProbe.installer.yaml" 2>&1
           $exitCode = $LASTEXITCODE
           Write-Host "::endgroup::"
 
