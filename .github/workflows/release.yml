@@ -112,12 +112,36 @@ jobs:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
           $wc = "$env:TEMP\wingetcreate.exe"
+
+          Write-Host "::group::Download wingetcreate"
           Invoke-WebRequest `
             -Uri "https://github.com/microsoft/winget-create/releases/latest/download/wingetcreate.exe" `
             -OutFile $wc -UseBasicParsing
+          Write-Host "::endgroup::"
+
+          if (-not (Test-Path $wc)) {
+            throw "Failed to download wingetcreate.exe"
+          }
+
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host "::warning::WINGET_TOKEN secret is not configured. Skipping manifest submission."
+            Write-Host "Set the WINGET_TOKEN secret in your repository settings to enable winget submission."
+            exit 0
+          }
+
+          Write-Host "::group::Submit winget manifest"
           & $wc submit `
             --token $env:WINGET_TOKEN `
-            https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/errorprobe-windows-amd64.exe
+            --url "https://github.com/Veverke/ErrorProbe/releases/download/${{ github.ref_name }}/errorprobe-windows-amd64.exe" 2>&1
+          $exitCode = $LASTEXITCODE
+          Write-Host "::endgroup::"
+
+          if ($exitCode -ne 0) {
+            Write-Host "::warning::wingetcreate submit exited with code $exitCode"
+            # Get help for troubleshooting
+            & $wc submit --help 2>&1 | Select-Object -First 20
+            throw "wingetcreate submit failed"
+          }
 
   # ── TD.8: Update Homebrew formula in Formula/errorprobe.rb ────────────────
   update-homebrew:
@@ -128,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: master
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update Formula/errorprobe.rb
@@ -147,4 +171,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/errorprobe.rb
           git commit -m "chore: bump Homebrew formula to ${VERSION}"
-          git push origin main
+          git push origin master
